@@ -39,7 +39,9 @@ def _mount():
                 return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
         # Session gate for everything except machine routes.
         machine = (
-            request.url.path.endswith("/integrations/telegram/webhook")
+            request.url.path.endswith("/healthz")
+            or request.url.path.endswith("/readyz")
+            or request.url.path.endswith("/integrations/telegram/webhook")
             or request.url.path.endswith("/integrations/email/webhook/mime")
             or request.url.path.endswith("/cron/reminders")
             or request.url.path.endswith("/cron/lag")
@@ -72,6 +74,9 @@ def _mount():
 api_app = _mount()
 api_app.add_api_route("/healthz", healthz, methods=["GET"])
 api_app.add_api_route("/readyz", readyz, methods=["GET"])
+
+# Serve the API app directly; the Next.js frontend proxies /api to it.
+app = api_app
 
 
 @app.api_route("/{rest:path}", methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"])
