@@ -109,7 +109,6 @@ def _robots_allowed(url):
     parsed = urlparse(url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     _check_url(robots_url)
-    host = parsed.hostname or ""
     try:
         with httpx.Client(timeout=5.0, follow_redirects=False, proxy=None, headers={"User-Agent": "HackTrackBot/0.1"}) as client:
             response = client.get(robots_url)
@@ -209,7 +208,7 @@ def fetch(url):
 
 
 def resolve_redirect(url):
-    host = _check_url(url)
+    _check_url(url)
     if not _robots_allowed(url):
         raise ValueError("blocked by robots.txt")
     parsed = urlparse(url)

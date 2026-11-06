@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from app import db, tokens
 from app.config import load_config
 from app.errors import Invalid, NotFound, body_bytes
-from app.errors import is_bad_uuid_error, is_duplicate_url_error
 
 router = APIRouter()
 

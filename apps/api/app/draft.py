@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -38,31 +37,6 @@ def parse_date(value, tz_name="UTC", out=None):
     except ValueError:
         pass
     return None, "UNKNOWN"
-
-
-def civil_date_of(instant, tz_name):
-    if not instant:
-        return ""
-    return instant.astimezone(load_loc(tz_name)).strftime("%Y-%m-%d")
-
-
-def end_of_day(date_str, tz_name):
-    try:
-        from datetime import date
-
-        y, m, d = (int(part) for part in date_str.split("-"))
-        local = datetime(y, m, d, 23, 59, 0, tzinfo=load_loc(tz_name))
-        return local.astimezone(timezone.utc)
-    except (ValueError, TypeError):
-        return None
-
-
-def tz_midnight(date_str, tz_name):
-    try:
-        y, m, d = (int(part) for part in date_str.split("-"))
-        return datetime(y, m, d, 0, 0, tzinfo=load_loc(tz_name)).astimezone(timezone.utc)
-    except (ValueError, TypeError):
-        return None
 
 
 def normalize_mode(text):

@@ -1,10 +1,9 @@
 import json
-import re
 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-from app.draft import Draft, civil_date_of, parse_date, type_from_label
+from app.draft import Draft, parse_date, type_from_label
 
 
 def detect_platform(url):

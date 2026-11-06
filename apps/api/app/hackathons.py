@@ -1336,7 +1336,6 @@ async def patch_milestone(milestone_id: str, request: Request, user_id: str = De
                 # resolve new values for due handling
                 old_due_at = old.get("due_at")
                 old_due_date_val = old.get("due_date")
-                old_due_date_str_resolved = _date_str(old_due_date_val) if old_due_date_val is not None else ""
                 old_precision = old["due_precision"]
                 # defaults: no change
                 new_due_at = old_due_at
