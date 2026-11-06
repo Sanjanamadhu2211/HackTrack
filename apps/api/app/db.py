@@ -1,11 +1,32 @@
 import os
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import psycopg
 
+# Neon Postgres is the database for this project. The DATABASE_URL should be
+# a Neon connection string (pooled or direct endpoint). psycopg connects to
+# Neon like any Postgres host; we only ensure SSL is on for Neon hosts when
+# the URL does not already set sslmode.
+
+
+def _neon_ssl_url(url):
+    if not url:
+        return url
+    try:
+        parsed = urlparse(url)
+        query = dict(parse_qsl(parsed.query))
+        query.setdefault("sslmode", "require")
+        return urlunparse(parsed._replace(query=urlencode(query)))
+    except Exception:
+        return url
+
 
 def connect(url=None):
-    return psycopg.connect(url or os.getenv("DATABASE_URL", ""), row_factory=psycopg.rows.dict_row)
+    raw = url or os.getenv("DATABASE_URL", "")
+    if "neon.tech" in raw:
+        raw = _neon_ssl_url(raw)
+    return psycopg.connect(raw, row_factory=psycopg.rows.dict_row, autocommit=False, connect_timeout=10)
 
 
 def ready(url=None):
