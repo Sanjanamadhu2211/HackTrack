@@ -24,6 +24,15 @@ def readyz():
 
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "migrate":
+        url = os.getenv("DATABASE_URL", "")
+        if not url:
+            print("DATABASE_URL is required")
+            raise SystemExit(1)
+        db.migrate(url, sys.argv[2] if len(sys.argv) > 2 else "up")
+        raise SystemExit(0)
     try:
         load_config()
     except RuntimeError as e:
