@@ -78,15 +78,7 @@ def require_user_dependency(request: Request):
         return JSONResponse({"error": "not signed in"}, status_code=401)
 
 
-def same_origin(request: Request):
-    if request.method in ("GET", "HEAD", "OPTIONS"):
-        return
-    origin = request.headers.get("origin", "")
-    if origin == cfg().app_base_url:
-        return
-    if origin == "" and request.headers.get("sec-fetch-site", "") == "same-origin":
-        return
-    raise Invalid("cross-origin request rejected")
+# Same-origin and session checks live in main.py middleware.
 
 
 def me_payload(user_id):
