@@ -1,281 +1,368 @@
-import os
+import logging
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from app import db, reminders, sender
-from app.config import load_config
-from app.errors import Invalid
+from app import db, reminders, tokens
+from app.rules import record_transition
 
 router = APIRouter()
 
 LEASE = timedelta(minutes=2)
 MAX_ATTEMPTS = 5
+BATCH_SIZE = 20
+MAX_BATCHES = 10
 
-
-def _sender():
-    cfg = load_config()
-    if not cfg.telegram_bot_token:
-        return None
-    return sender
-
-
-def claim(conn, now, limit=20):
-    with conn.cursor() as cur:
-        cur.execute(
-            "UPDATE notification_jobs SET state='CLAIMED', lease_until=%s, attempt_count=attempt_count+1, updated_at=now() "
-            "WHERE id IN (SELECT id FROM notification_jobs WHERE (state='PENDING' AND scheduled_at<=%s) OR (state='CLAIMED' AND lease_until<%s) "
-            "ORDER BY scheduled_at FOR UPDATE SKIP LOCKED LIMIT %s) RETURNING id, attempt_count",
-            (now + LEASE, now, now, limit),
-        )
-        return cur.fetchall()
+log = logging.getLogger(__name__)
 
 
 def housekeep(conn, now):
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT m.id, m.user_id FROM milestones m WHERE m.status='TODO' AND m.date_confirmed AND m.due_at IS NOT NULL AND m.due_at<%s AND m.type<>'CONFIRM_DATES'",
-            (now,),
-        )
-        for row in cur.fetchall():
-            cur.execute("UPDATE milestones SET status='MISSED', updated_at=now() WHERE id=%s", (row["id"],))
-            cur.execute(
-                "INSERT INTO state_transitions (user_id, entity, entity_id, field, from_state, to_state, actor) "
-                "VALUES (%s,'milestone',%s,'status','TODO','MISSED','SYSTEM')",
-                (row["user_id"], row["id"]),
-            )
-            from app.reminders import cancel_pending
-
-            cancel_pending(conn, str(row["id"]))
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT h.id FROM hackathons h WHERE h.outcome IS NOT NULL AND h.archived_at IS NULL "
-            "AND EXISTS (SELECT 1 FROM state_transitions s WHERE s.entity='hackathon' AND s.entity_id=h.id AND s.field='outcome' AND s.at<%s)",
-            (now - timedelta(days=14),),
-        )
-        for row in cur.fetchall():
-            cur.execute("UPDATE hackathons SET archived_at=now(), updated_at=now() WHERE id=%s", (row["id"],))
-
-
-def tick(now=None):
-    now = now or datetime.now(timezone.utc)
-    claimed = sent = missed = 0
-    with db.connect() as conn:
-        with conn:
-            housekeep(conn, now)
-    active_sender = _sender()
-    for _ in range(200):
-        with db.connect() as conn:
-            with conn:
-                jobs = claim(conn, now, limit=1)
-        if not jobs:
-            break
-        claimed += 1
-        job = jobs[0]
-        try:
-            kind = process_job(str(job["id"]), job["attempt_count"], now, active_sender)
-            if kind == "SENT":
-                sent += 1
-        except Exception:
-            pass
-    with db.connect() as conn:
+    """Mark overdue TODO milestones MISSED and archive old hackathons (in tx)."""
+    missed = 0
+    with conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) AS c FROM notification_jobs WHERE state='EXPIRED' AND updated_at>=%s", (now - timedelta(seconds=5),))
-            missed = int(cur.fetchone()["c"] or 0)
-    return {"claimed": claimed, "sent": sent, "missed": missed}
+            cur.execute(
+                "SELECT id, user_id FROM milestones WHERE status = 'TODO' AND date_confirmed "
+                "AND due_at < %s AND type <> 'CONFIRM_DATES'",
+                (now,),
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                cur.execute("UPDATE milestones SET status = 'MISSED', updated_at = now() WHERE id = %s", (row["id"],))
+                record_transition(conn, str(row["user_id"]), "milestone", str(row["id"]), "status", "TODO", "MISSED", "SYSTEM")
+                reminders.cancel_pending(conn, str(row["id"]))
+                missed += 1
+            cur.execute(
+                "UPDATE hackathons h SET archived_at = now(), updated_at = now() "
+                "WHERE h.archived_at IS NULL AND EXISTS ("
+                "SELECT 1 FROM state_transitions st WHERE st.entity = 'hackathon' "
+                "AND st.entity_id = h.id AND st.field = 'outcome' AND st.at < %s)",
+                (now - timedelta(days=14),),
+            )
+    return missed
 
 
-def process_job(job_id, fence, now, active_sender):
-    with db.connect() as conn:
+def claim(connect_factory, now):
+    """Claim one due job; returns {id, attempt_count} or None. attempt_count is the fencing token."""
+    with connect_factory() as conn:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT j.*, m.type, m.title, m.due_at, m.due_precision, m.required, m.status, m.date_confirmed, m.version, "
-                    "h.title AS hack_title, h.archived_at, h.registration_state, h.outcome, h.event_timezone, "
-                    "t.chat_id, u.timezone AS user_tz "
-                    "FROM notification_jobs j JOIN milestones m ON m.id=j.milestone_id JOIN hackathons h ON h.id=m.hackathon_id "
-                    "JOIN users u ON u.id=j.user_id LEFT JOIN telegram_links t ON t.user_id=j.user_id "
-                    "WHERE j.id=%s AND j.state='CLAIMED' AND j.attempt_count=%s FOR UPDATE OF j, m",
-                    (job_id, fence),
+                    "UPDATE notification_jobs SET state = 'CLAIMED', lease_until = %s + %s, "
+                    "attempt_count = attempt_count + 1, updated_at = now() "
+                    "WHERE id IN (SELECT id FROM notification_jobs "
+                    "WHERE (state = 'PENDING' AND scheduled_at <= %s) "
+                    "OR (state = 'CLAIMED' AND lease_until < %s) "
+                    "ORDER BY scheduled_at FOR UPDATE SKIP LOCKED LIMIT 1) "
+                    "RETURNING id, attempt_count",
+                    (now, LEASE, now, now),
                 )
-                row = cur.fetchone()
-                if not row:
-                    return "LOST"
-                milestone_id = str(row["milestone_id"])
-                live = (
-                    row["status"] == "TODO"
-                    and row["date_confirmed"]
-                    and row["archived_at"] is None
-                    and row["registration_state"] not in ("SKIPPED", "REJECTED")
-                    and (row["outcome"] is None or (row["outcome"] == "SUBMITTED" and row["type"] != "SUBMIT"))
-                )
-                if not live:
-                    finish(cur, job_id, fence, "CANCELLED", "")
-                    return "CANCELLED"
-                due = row["due_at"]
-                due_limit = due + timedelta(minutes=30) if row["offset_label"] == "T-0" else due
-                if due is None or now > due_limit or now - row["scheduled_at"] > reminders.staleness_window(row["offset_label"]):
-                    finish(cur, job_id, fence, "EXPIRED", "")
-                    return "EXPIRED"
-                chat_id = row["chat_id"]
-                if chat_id is None:
-                    finish(cur, job_id, fence, "FAILED", "telegram not linked")
-                    return "FAILED"
-                prefs = reminders.load_prefs(conn, str(row["user_id"]))
-                cur.execute("SELECT pg_advisory_xact_lock(hashtextextended('reminder-cap:' || %s::text, 0))", (str(row["user_id"]),))
-                user_tz = _tz(row["user_tz"])
-                day_start = datetime(now.year, now.month, now.day, tzinfo=user_tz).astimezone(timezone.utc)
-                if over_cap(cur, row, str(row["user_id"]), job_id, now, day_start, prefs):
-                    finish(cur, job_id, fence, "CANCELLED", "daily cap reached")
-                    return "CANCELLED"
-                cur.execute(
-                    "INSERT INTO notification_deliveries (user_id, job_id) VALUES (%s, %s) RETURNING id",
-                    (row["user_id"], job_id),
-                )
-                delivery_id = str(cur.fetchone()["id"])
-                version = row["version"]
-                text = reminder_text(row, now)
-                open_url = f"{load_config().app_base_url}/hackathons/{row['hackathon_id']}"
-    if active_sender is None:
-        with db.connect() as conn:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute("UPDATE notification_jobs SET state='PENDING', lease_until=NULL, updated_at=now() WHERE id=%s AND attempt_count=%s", (job_id, fence))
-        return "PENDING"
-    try:
-        message_id = sender.send_reminder(chat_id, text, delivery_id, open_url)
-    except Exception as e:
-        attempts = fence
-        if attempts >= MAX_ATTEMPTS:
-            with db.connect() as conn:
-                with conn:
-                    with conn.cursor() as cur:
-                        finish(cur, job_id, fence, "FAILED", str(e)[:500])
-            return "FAILED"
-        backoff = now + timedelta(minutes=2**attempts)
-        with db.connect() as conn:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE notification_jobs SET state='PENDING', lease_until=NULL, scheduled_at=%s, last_error=%s, updated_at=now() "
-                        "WHERE id=%s AND state='CLAIMED' AND attempt_count=%s",
-                        (backoff, str(e)[:500], job_id, fence),
-                    )
-        return "RETRY"
-    with db.connect() as conn:
+                return cur.fetchone()
+
+
+def _finish(connect_factory, job_id, fence, state, last_error="", scheduled_at=None):
+    """Fenced terminal/transition write; True iff this claimant still owns the job."""
+    with connect_factory() as conn:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE notification_deliveries SET provider_message_id=%s, sent_at=now(), updated_at=now() WHERE id=%s",
-                    (message_id, delivery_id),
+                    "UPDATE notification_jobs SET state = %s, last_error = %s, scheduled_at = COALESCE(%s, scheduled_at), "
+                    "lease_until = NULL, updated_at = now() "
+                    "WHERE id = %s AND state = 'CLAIMED' AND attempt_count = %s",
+                    (state, last_error, scheduled_at, job_id, fence),
                 )
-                finish(cur, job_id, fence, "SENT", "")
-    return "SENT"
+                return cur.rowcount == 1
 
 
-def finish(cur, job_id, fence, state, error):
-    cur.execute(
-        "UPDATE notification_jobs SET state=%s, lease_until=NULL, last_error=%s, updated_at=now() "
-        "WHERE id=%s AND state='CLAIMED' AND attempt_count=%s",
-        (state, error, job_id, fence),
-    )
-
-
-def over_cap(cur, row, user_id, current_job_id, now, day_start, prefs):
-    if row["final"] and row["required"]:
+def _is_live(hackathon, milestone):
+    if hackathon["archived_at"] is not None:
         return False
-    cur.execute(
-        "SELECT count(*) AS sent FROM notification_deliveries d JOIN notification_jobs j ON j.id=d.job_id "
-        "WHERE d.user_id=%s AND ((d.sent_at>=%s AND d.sent_at<%s) OR "
-        "(d.sent_at IS NULL AND j.state='CLAIMED' AND j.id<>%s AND d.created_at>=j.updated_at AND d.created_at<%s))",
-        (user_id, day_start, day_start + timedelta(days=1), current_job_id, day_start + timedelta(days=1)),
-    )
-    sent_count = int(cur.fetchone()["sent"] or 0)
-    cur.execute(
-        "SELECT count(*) AS finals FROM notification_jobs j JOIN milestones m ON m.id=j.milestone_id "
-        "WHERE j.user_id=%s AND j.id<>%s AND j.state IN ('PENDING','CLAIMED') AND j.scheduled_at>=%s AND j.scheduled_at<%s "
-        "AND m.status='TODO' AND m.required AND j.final",
-        (user_id, current_job_id, day_start, day_start + timedelta(days=1)),
-    )
-    finals = int(cur.fetchone()["finals"] or 0)
-    budget = prefs.cap_per_day - finals
-    if not row["required"]:
-        cur.execute(
-            "SELECT count(*) AS req FROM notification_jobs j JOIN milestones m ON m.id=j.milestone_id "
-            "WHERE j.user_id=%s AND j.id<>%s AND j.state IN ('PENDING','CLAIMED') AND j.scheduled_at>=%s AND j.scheduled_at<%s "
-            "AND m.status='TODO' AND m.required AND NOT j.final",
-            (user_id, current_job_id, day_start, day_start + timedelta(days=1)),
-        )
-        budget -= int(cur.fetchone()["req"] or 0)
-    return sent_count >= budget
+    if hackathon["registration_state"] in ("SKIPPED", "REJECTED"):
+        return False
+    outcome = hackathon["outcome"]
+    if outcome is None:
+        return True
+    return outcome == "SUBMITTED" and milestone["type"] != "SUBMIT"
 
 
-def _tz(name):
-    try:
-        return ZoneInfo(name)
-    except Exception:
-        return timezone.utc
+def _invalid_state(job, milestone, hackathon, chat_id, now):
+    """None when deliverable, else (state, last_error) terminal outcome."""
+    if milestone is None or milestone["status"] != "TODO" or not milestone["date_confirmed"] or not _is_live(hackathon, milestone):
+        return "CANCELLED", ""
+    due = milestone["due_at"]
+    due_limit = due + timedelta(minutes=30) if due and job["offset_label"] == "T-0" else due
+    if due is None or now > due_limit or now - job["scheduled_at"] > reminders.staleness_window(job["offset_label"]):
+        return "EXPIRED", ""
+    if chat_id is None:
+        return "FAILED", "telegram not linked"
+    return None
 
 
-def reminder_text(row, now):
-    if row["offset_label"] == "leave-by":
+def _until(delta):
+    if delta < timedelta(0):
+        return "now"
+    hours = delta.total_seconds() / 3600
+    if delta >= timedelta(hours=48):
+        return f"in {int(hours // 24)} days"
+    if delta >= timedelta(hours=1):
+        return f"in {int(hours)} h"
+    return f"in {int(delta.total_seconds() // 60)} min"
+
+
+def reminder_text(job, milestone, hackathon, now):
+    if job["offset_label"] == "leave-by":
         head = "Time to leave"
-    elif row["final"]:
+    elif job["final"]:
         head = "Final reminder"
     else:
         head = "Reminder"
-    due = row["due_at"]
-    if row["due_precision"] == "DATE" and due:
-        when = due.astimezone(_tz(row["event_timezone"])).strftime("%a %d %b") + ", by end of day (assumed)"
+    due = milestone["due_at"].astimezone(timezone.utc)
+    if milestone["due_precision"] == "DATE":
+        due_text = f"{due.strftime('%a')} {due.day} {due.strftime('%b')}, by end of day (assumed)"
     else:
-        when = due.strftime("%a %d %b %H:%M %Z") if due else "unknown"
-    delta = due - now if due else timedelta(0)
-    total_minutes = int(delta.total_seconds() // 60)
-    if total_minutes < 0:
-        until = "now"
-    elif total_minutes >= 48 * 60:
-        until = f"in {total_minutes // (24 * 60)} days"
-    elif total_minutes >= 60:
-        until = f"in {total_minutes // 60} h"
-    else:
-        until = f"in {total_minutes} min"
-    return f"{head}: {row['title']}\n{row['hack_title']}\nDue {when} ({until})"
+        due_text = f"{due.strftime('%a')} {due.day} {due.strftime('%b')} {due.strftime('%H:%M')} {due.strftime('%Z')} ({_until(milestone['due_at'] - now)})"
+    return f"{head}: {milestone['title']}\n{hackathon['title']}\nDue {due_text}"
 
 
-def _cron_auth(request: Request):
-    secret = os.getenv("CRON_SECRET", "")
-    header = request.headers.get("authorization", "")
-    if not secret or header != f"Bearer {secret}":
+def _over_cap(cur, user_id, job_id, required, final, prefs, now):
+    if final and required:
         return False
-    import hashlib
+    local_now = now.astimezone(prefs.location)
+    day_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=prefs.location)
+    day_end = day_start + timedelta(days=1)
+    cur.execute(
+        "SELECT count(*) AS n FROM notification_deliveries d JOIN notification_jobs j ON j.id = d.job_id "
+        "WHERE d.user_id = %s AND d.sent_at >= %s AND d.sent_at < %s",
+        (user_id, day_start, day_end),
+    )
+    sent = cur.fetchone()["n"]
+    cur.execute(
+        "SELECT count(*) AS n FROM notification_deliveries d JOIN notification_jobs j ON j.id = d.job_id "
+        "WHERE d.user_id = %s AND d.sent_at IS NULL AND j.state = 'CLAIMED' AND j.id <> %s "
+        "AND d.created_at >= j.updated_at AND d.created_at < %s",
+        (user_id, job_id, day_end),
+    )
+    sent += cur.fetchone()["n"]
+    cur.execute(
+        "SELECT count(*) AS n FROM notification_jobs j JOIN milestones m ON m.id = j.milestone_id "
+        "WHERE j.user_id = %s AND j.id <> %s AND j.state IN ('PENDING', 'CLAIMED') "
+        "AND j.scheduled_at >= %s AND j.scheduled_at < %s AND m.status = 'TODO' AND m.required AND j.final",
+        (user_id, job_id, day_start, day_end),
+    )
+    finals = cur.fetchone()["n"]
+    budget = prefs.cap_per_day - finals
+    if not required:
+        cur.execute(
+            "SELECT count(*) AS n FROM notification_jobs j JOIN milestones m ON m.id = j.milestone_id "
+            "WHERE j.user_id = %s AND j.id <> %s AND j.state IN ('PENDING', 'CLAIMED') "
+            "AND j.scheduled_at >= %s AND j.scheduled_at < %s AND m.status = 'TODO' AND m.required AND NOT j.final",
+            (user_id, job_id, day_start, day_end),
+        )
+        budget -= cur.fetchone()["n"]
+    return sent >= budget
 
-    return hashlib.sha256(header.encode()).digest() == hashlib.sha256(f"Bearer {secret}".encode()).digest()
+
+def process(connect_factory, job_id, fence, sender):
+    """Process one claimed job; True iff a reminder was sent."""
+    now = datetime.now(timezone.utc)
+    job_id = str(job_id)
+    # Phase 1: load under fence.
+    with connect_factory() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM notification_jobs WHERE id = %s", (job_id,))
+            job = cur.fetchone()
+            if job is None or job["state"] != "CLAIMED" or job["attempt_count"] != fence:
+                return False
+            cur.execute("SELECT * FROM milestones WHERE id = %s", (job["milestone_id"],))
+            milestone = cur.fetchone()
+            if milestone is None:
+                return False
+            cur.execute("SELECT * FROM hackathons WHERE id = %s", (milestone["hackathon_id"],))
+            hackathon = cur.fetchone()
+            user_id = str(job["user_id"])
+            cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
+            link = cur.fetchone()
+            chat_id = link["chat_id"] if link else None
+            prefs = reminders.load_prefs(conn, user_id)
+    invalid = _invalid_state(job, milestone, hackathon, chat_id, now)
+    if invalid:
+        _finish(connect_factory, job_id, fence, invalid[0], invalid[1])
+        return False
+    text = reminder_text(job, milestone, hackathon, now)
+    open_url = hackathon["source_url"]
+    milestone_id = str(milestone["id"])
+    milestone_version = milestone["version"]
+    required = bool(milestone["required"])
+    final = bool(job["final"])
+
+    # Phase 2: reservation tx; insert delivery as the reservation.
+    delivery_id = None
+    with connect_factory() as conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id FROM milestones WHERE id = %s FOR UPDATE", (milestone_id,))
+                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"reminder-cap:{user_id}",))
+                cur.execute("SELECT * FROM notification_jobs WHERE id = %s FOR UPDATE", (job_id,))
+                current = cur.fetchone()
+                if current is None or current["state"] != "CLAIMED" or current["attempt_count"] != fence:
+                    return False
+                cur.execute("SELECT version, status, date_confirmed, due_at, type, hackathon_id, required, title, due_precision FROM milestones WHERE id = %s", (milestone_id,))
+                mrow = cur.fetchone()
+                if mrow is None or mrow["version"] != milestone_version:
+                    return False
+                cur.execute("SELECT * FROM hackathons WHERE id = %s", (mrow["hackathon_id"],))
+                hackathon2 = cur.fetchone()
+                cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
+                link2 = cur.fetchone()
+                chat2 = link2["chat_id"] if link2 else None
+                if _invalid_state(current, mrow, hackathon2, chat2, now) is not None:
+                    return False
+                if _over_cap(cur, user_id, job_id, required, final, prefs, now):
+                    cur.execute(
+                        "UPDATE notification_jobs SET state = 'CANCELLED', last_error = 'daily cap reached', lease_until = NULL, updated_at = now() "
+                        "WHERE id = %s AND state = 'CLAIMED' AND attempt_count = %s",
+                        (job_id, fence),
+                    )
+                    return False
+                cur.execute(
+                    "INSERT INTO notification_deliveries (user_id, job_id) VALUES (%s, %s) RETURNING id",
+                    (user_id, job_id),
+                )
+                delivery_id = str(cur.fetchone()["id"])
+
+    # Phase 3: reload after reservation.
+    changed = False
+    with connect_factory() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM notification_jobs WHERE id = %s", (job_id,))
+            job2 = cur.fetchone()
+            if job2 is None or job2["state"] != "CLAIMED" or job2["attempt_count"] != fence:
+                return False
+            cur.execute("SELECT * FROM milestones WHERE id = %s", (milestone_id,))
+            milestone2 = cur.fetchone()
+            cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
+            link2 = cur.fetchone()
+            chat2 = link2["chat_id"] if link2 else None
+            if (
+                milestone2 is None
+                or milestone2["version"] != milestone_version
+                or _invalid_state(job2, milestone2, hackathon, chat2, now) is not None
+                or chat2 != chat_id
+            ):
+                changed = True
+    if changed:
+        with connect_factory() as conn:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE notification_jobs SET state = 'CANCELLED', last_error = 'reminder changed before delivery', "
+                        "lease_until = NULL, updated_at = now() WHERE id = %s AND state = 'CLAIMED' AND attempt_count = %s",
+                        (job_id, fence),
+                    )
+                    if cur.rowcount == 1:
+                        cur.execute("DELETE FROM notification_deliveries WHERE id = %s", (delivery_id,))
+        return False
+
+    try:
+        message_id = sender.send_reminder(chat_id, text, delivery_id, open_url)
+    except Exception as error:
+        if fence >= MAX_ATTEMPTS:
+            _finish(connect_factory, job_id, fence, "FAILED", str(error))
+        else:
+            _finish(connect_factory, job_id, fence, "PENDING", "", now + timedelta(minutes=2**fence))
+        return False
+    with connect_factory() as conn:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE notification_jobs SET state = 'SENT', lease_until = NULL, updated_at = now() "
+                    "WHERE id = %s AND state = 'CLAIMED' AND attempt_count = %s",
+                    (job_id, fence),
+                )
+                if cur.rowcount != 1:
+                    return False
+                cur.execute(
+                    "UPDATE notification_deliveries SET provider_message_id = %s, sent_at = %s WHERE id = %s",
+                    (str(message_id), now, delivery_id),
+                )
+    return True
+
+
+def tick(connect_factory, sender):
+    """conn-less tick: housekeep first, then claim and process one job at a time."""
+    now = datetime.now(timezone.utc)
+    with connect_factory() as conn:
+        missed = housekeep(conn, now)
+    if sender is None:
+        return {"claimed": 0, "sent": 0, "missed": missed}
+    claimed = 0
+    sent = 0
+    while claimed < BATCH_SIZE * MAX_BATCHES:
+        job = claim(connect_factory, datetime.now(timezone.utc))
+        if job is None:
+            break
+        claimed += 1
+        try:
+            if process(connect_factory, job["id"], job["attempt_count"], sender):
+                sent += 1
+        except Exception as error:
+            log.exception("reminder processing failed for job %s: %s", job["id"], error)
+            continue
+    return {"claimed": claimed, "sent": sent, "missed": missed}
+
+
+def _cron_authorized(request):
+    secret = _cron_secret()
+    if not secret:
+        return False
+    return tokens.constant_time_equal(request.headers.get("authorization", ""), f"Bearer {secret}")
+
+
+def _cron_secret():
+    from app.config import load_config
+
+    try:
+        return load_config().cron_secret
+    except RuntimeError:
+        return ""
+
+
+def _default_sender():
+    from app.config import load_config
+    from app.telegram import Sender
+
+    token = load_config().telegram_bot_token
+    if not token:
+        return None
+    return Sender(token)
 
 
 @router.api_route("/cron/reminders", methods=["GET", "POST"])
-def cron_reminders(request: Request):
-    if not _cron_auth(request):
+async def cron_handler(request: Request):
+    if not _cron_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
-        return tick()
+        result = tick(db.connect, _default_sender())
     except Exception:
+        log.exception("cron tick failed")
         return JSONResponse({"error": "internal error"}, status_code=500)
+    return JSONResponse(result, status_code=200)
 
 
-@router.api_route("/cron/lag", methods=["GET"])
-def cron_lag(request: Request):
-    if not _cron_auth(request):
+@router.get("/cron/lag")
+async def lag_handler(request: Request):
+    if not _cron_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
         with db.connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT count(*) AS c, COALESCE(EXTRACT(EPOCH FROM now()-min(scheduled_at)),0) AS lag "
-                    "FROM notification_jobs WHERE state='PENDING' AND scheduled_at<now()"
+                    "SELECT count(*) AS n, COALESCE(EXTRACT(EPOCH FROM now() - min(scheduled_at)), 0) AS lag "
+                    "FROM notification_jobs WHERE state = 'PENDING' AND scheduled_at < now()"
                 )
                 row = cur.fetchone()
     except Exception:
+        log.exception("lag check failed")
         return JSONResponse({"error": "internal error"}, status_code=500)
-    return {"overdue_jobs": int(row["c"] or 0), "oldest_lag_seconds": float(row["lag"] or 0)}
+    return JSONResponse({"overdue_jobs": int(row["n"]), "oldest_lag_seconds": float(row["lag"])}, status_code=200)
