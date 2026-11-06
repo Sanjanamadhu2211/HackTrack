@@ -1,0 +1,6 @@
+beautifulsoup4==4.12.3
+cryptography==46.0.3
+fastapi==0.121.3
+httpx==0.27.2
+psycopg[binary]==3.3.6
+uvicorn==0.38.0
