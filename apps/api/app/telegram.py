@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -79,13 +78,6 @@ class Sender:
             )
         except Exception:
             pass
-
-    def get_updates(self, offset=None, timeout=30):
-        payload = {"timeout": timeout}
-        if offset:
-            payload["offset"] = offset
-        return self._bot.call("getUpdates", payload) or []
-
 
 class Ack:
     def __init__(self, kind, snoozed_until=None):
@@ -242,25 +234,6 @@ def _edit_keyboard(sender, callback):
         return
     chat = message.get("chat") or {}
     sender.edit_keyboard(chat.get("id"), message.get("message_id"))
-
-
-def poll(sender, connect_factory=None):
-    connect_factory = connect_factory or db.connect
-    offset = None
-    while True:
-        try:
-            updates = sender.get_updates(offset=offset, timeout=30)
-        except Exception:
-            time.sleep(5)
-            continue
-        for update in updates:
-            uid = update.get("update_id")
-            if uid is not None:
-                offset = uid + 1
-            try:
-                handle_update(sender, update, connect_factory)
-            except Exception:
-                continue
 
 
 @router.post("/integrations/telegram/pair")

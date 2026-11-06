@@ -1,13 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
-
-from app import db
-
-router = APIRouter()
-
 REGISTRATION_NEXT = {
     "DISCOVERED": {"PLANNING", "REGISTERED", "SKIPPED"},
     "PLANNING": {"REGISTERED", "SKIPPED"},
@@ -23,10 +16,6 @@ PARTICIPATION_NEXT = {
 OUTCOMES = {"SUBMITTED", "ATTENDED_NO_SUBMISSION", "WITHDRAWN", "MISSED", "EVENT_CANCELLED"}
 MILESTONE_NEXT = {"TODO": {"DONE", "SKIPPED", "MISSED"}, "MISSED": {"DONE"}}
 MILESTONE_TYPES = {"REGISTER", "RSVP", "TEAM", "CHECK_IN", "START", "SUBMIT", "PRESENT", "CONFIRM_DATES", "OTHER"}
-
-
-def civil_string(value):
-    return value.strftime("%Y-%m-%d") if value else ""
 
 
 def confidence(milestone):

@@ -269,11 +269,6 @@ def verify_mailgun_signature(timestamp, token, signature, signing_key=None):
     return hmac.compare_digest(expected.lower(), sig.lower())
 
 
-def compute_mailgun_signature(timestamp, token, signing_key=None) -> str:
-    key = signing_key if signing_key is not None else _mailgun_key()
-    return hmac.new(key.encode(), (str(timestamp) + str(token)).encode(), hashlib.sha256).hexdigest()
-
-
 def detect_kind(subject, text) -> str:
     haystack = f"{subject or ''}\n{text or ''}".lower().replace("’", "'")
     for phrase in _REJECTION:
