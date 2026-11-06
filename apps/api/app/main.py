@@ -1,22 +1,18 @@
 import os
 
 import uvicorn
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app import db
 from app.config import load_config
 from app.errors import register_error_handlers
 
-app = FastAPI()
 
-
-@app.api_route("/healthz", methods=["GET"])
 def healthz():
     return PlainTextResponse("ok")
 
 
-@app.api_route("/readyz", methods=["GET"])
 def readyz():
     if db.ready():
         return PlainTextResponse("ok")
@@ -38,18 +34,20 @@ def _mount():
             ):
                 return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
         # Session gate for everything except machine routes.
-        machine = (
-            request.url.path.endswith("/healthz")
-            or request.url.path.endswith("/readyz")
-            or request.url.path.endswith("/integrations/telegram/webhook")
-            or request.url.path.endswith("/integrations/email/webhook/mime")
-            or request.url.path.endswith("/cron/reminders")
-            or request.url.path.endswith("/cron/lag")
-            or request.url.path.endswith("/cron/calendar")
-            or request.url.path.endswith("/auth/google/start")
-            or request.url.path.endswith("/auth/google/callback")
-            or request.url.path.endswith("/auth/logout")
-            or request.url.path.endswith("/auth/dev-login")
+        machine = request.url.path.endswith(
+            (
+                "/healthz",
+                "/readyz",
+                "/integrations/telegram/webhook",
+                "/integrations/email/webhook/mime",
+                "/cron/reminders",
+                "/cron/lag",
+                "/cron/calendar",
+                "/auth/google/start",
+                "/auth/google/callback",
+                "/auth/logout",
+                "/auth/dev-login",
+            )
         )
         if not machine:
             from app.auth import require_user
@@ -77,33 +75,6 @@ api_app.add_api_route("/readyz", readyz, methods=["GET"])
 
 # Serve the API app directly; the Next.js frontend proxies /api to it.
 app = api_app
-
-
-@app.api_route("/{rest:path}", methods=["GET", "POST", "PATCH", "DELETE", "PUT", "OPTIONS"])
-async def proxy(request: Request):
-    response = await _forward(request)
-    return response
-
-
-async def _forward(request: Request):
-    from starlette.responses import Response as StarletteResponse
-
-    path = request.url.path
-    qs = f"?{request.url.query}" if request.url.query else ""
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host",)}
-    body = await request.body()
-    import httpx
-
-    origin = os.getenv("API_ORIGIN_INTERNAL", os.getenv("APP_BASE_URL", "http://localhost:8080"))
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.request(
-            request.method,
-            f"{origin}{path}{qs}",
-            headers=headers,
-            content=body if body else None,
-            cookies=dict(request.cookies),
-        )
-    return StarletteResponse(resp.content, status_code=resp.status_code, headers=dict(resp.headers))
 
 
 if __name__ == "__main__":
