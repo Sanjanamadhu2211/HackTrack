@@ -14,10 +14,6 @@ class Config:
     telegram_webhook_secret: str = ""
     cron_secret: str = ""
     dev_login: bool = False
-    anthropic_api_key: str = ""
-    inbound_email_domain: str = ""
-    mailgun_signing_key: str = ""
-    calendar_token_key: str = ""
 
     @property
     def secure(self):
@@ -35,10 +31,6 @@ def load_config():
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", ""),
         cron_secret=os.getenv("CRON_SECRET", ""),
         dev_login=os.getenv("DEV_LOGIN") == "1",
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-        inbound_email_domain=os.getenv("INBOUND_EMAIL_DOMAIN", ""),
-        mailgun_signing_key=os.getenv("MAILGUN_SIGNING_KEY", ""),
-        calendar_token_key=os.getenv("CALENDAR_TOKEN_KEY", ""),
     )
     missing = []
 
