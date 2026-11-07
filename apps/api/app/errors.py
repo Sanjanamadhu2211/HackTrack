@@ -26,6 +26,12 @@ def register_error_handlers(app: FastAPI):
     async def not_found_handler(request, exc: NotFound):
         return JSONResponse({"error": "not found"}, status_code=404)
 
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc: Exception):
+        import logging
+        logging.getLogger("app").exception("Unhandled server error: %s", exc)
+        return JSONResponse({"error": f"Internal server error: {exc}"}, status_code=500)
+
 
 def is_duplicate_url_error(exc):
     if isinstance(exc, pg_errors.UniqueViolation):

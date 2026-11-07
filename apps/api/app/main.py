@@ -72,6 +72,8 @@ def _mount():
 api_app = _mount()
 api_app.add_api_route("/healthz", healthz, methods=["GET"])
 api_app.add_api_route("/readyz", readyz, methods=["GET"])
+api_app.add_api_route("/api/healthz", healthz, methods=["GET"])
+api_app.add_api_route("/api/readyz", readyz, methods=["GET"])
 
 # Serve the API app directly; the Next.js frontend proxies /api to it.
 app = api_app
