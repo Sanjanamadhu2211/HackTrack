@@ -1,5 +1,5 @@
 // Thin client for the Python FastAPI app. Every call goes to /api on this origin;
-// next.config.ts proxies it to the API service.
+// /api is routed by Vercel services mode (top-level vercel.json rewrites /api to the API service).
 
 export type Mode = "ONLINE" | "OFFLINE" | "HYBRID";
 
