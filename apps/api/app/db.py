@@ -54,6 +54,7 @@ def migrate(url=None, direction="up"):
     with connect(url) as conn:
         with conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_xact_lock(781004211)")
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS goose_db_version ("
                     "id serial PRIMARY KEY, version_id bigint NOT NULL, is_applied boolean NOT NULL, tstamp timestamptz NOT NULL DEFAULT now())"
