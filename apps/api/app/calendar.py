@@ -583,3 +583,22 @@ def cron_calendar(request: Request):
     if errors:
         return JSONResponse({"error": "internal error"}, status_code=500)
     return {"status": "ok"}
+
+
+@router.api_route("/integrations/google/calendar/sync", methods=["POST"])
+def sync_calendar(request: Request, user_id: str = Depends(require_user_dependency)):
+    """User-triggered sync of the authenticated user's Google Calendar.
+
+    Not a cron: runs only for the current user, on demand. Fenced against
+    concurrent cron runs via sync_generation so an on-demand sync never
+    overwrites newer cron state.
+    """
+    if not isinstance(user_id, str):
+        return user_id
+    deadline = time.time() + 45.0
+    try:
+        _sync_user(user_id, deadline)
+    except Exception:
+        _set_sync_error(user_id)
+        return JSONResponse({"error": "sync failed"}, status_code=500)
+    return {"status": "ok"}

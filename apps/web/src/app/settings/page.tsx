@@ -23,6 +23,9 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
   const [msg, setMsg] = useState("");
   const [pairURL, setPairURL] = useState("");
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
+  const [syncOk, setSyncOk] = useState(false);
 
   useEffect(() => {
     api<{ connected: boolean; last_error: string }>("/integrations/google/calendar").then(
@@ -37,6 +40,20 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       setCalendarConnected(false);
     } catch (err) {
       setMsg((err as Error).message);
+    }
+  }
+
+  async function syncCalendar() {
+    setSyncing(true);
+    setSyncError("");
+    setSyncOk(false);
+    try {
+      await api<{ status: string }>("/integrations/google/calendar/sync", { method: "POST" });
+      setSyncOk(true);
+    } catch (err) {
+      setSyncError((err as Error).message);
+    } finally {
+      setSyncing(false);
     }
   }
 
@@ -147,10 +164,23 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       <h2>Google Calendar</h2>
       <div className="panel">
         {calendarConnected === null ? <p>Checking Calendar connection…</p> : calendarConnected ? (
-          <div className="row"><span>Connected</span><button onClick={disconnectCalendar}>Disconnect</button></div>
+          <div className="row">
+            <span>Connected</span>
+            <button onClick={disconnectCalendar}>Disconnect</button>
+            <button
+              disabled={syncing}
+              onClick={syncCalendar}
+              className="button"
+              aria-busy={syncing}
+            >
+              {syncing ? "Syncing…" : "Sync now"}
+            </button>
+          </div>
         ) : (
           <a className="button" href="/api/integrations/google/calendar/start">Connect Google Calendar</a>
         )}
+        {syncOk ? <p className="badge ok" role="status">Synced.</p> : null}
+        {syncError ? <p className="error" role="alert">{syncError}</p> : null}
         <p className="muted">Confirmed deadlines are synced to a dedicated HackTrack calendar. Disconnecting revokes access but leaves that calendar in Google.</p>
       </div>
 
