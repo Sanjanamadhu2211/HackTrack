@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-// The browser only ever talks to this origin (same-origin /api/v1 + cookies).
+// The browser only ever talks to this origin (same-origin /api + cookies).
 // On Vercel in services mode the top-level vercel.json rewrites route /api/*
 // to the api service, so no proxy is needed. API_ORIGIN only matters for
 // local dev, where the FastAPI app runs separately on localhost:8080.

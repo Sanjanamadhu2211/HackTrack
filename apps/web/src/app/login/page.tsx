@@ -26,7 +26,7 @@ export default function LoginPage() {
       <h1>Sign in</h1>
       <p className="muted">HackTrack keeps one clear next action for every hackathon you join.</p>
       {/* A full navigation, not fetch: the API redirects to Google. */}
-      <a className="button primary" href="/api/v1/auth/google/start">
+      <a className="button primary" href="/api/auth/google/start">
         Sign in with Google
       </a>
       {devLogin && (

@@ -123,7 +123,7 @@ def google_start():
 
     params = {
         "client_id": c.google_client_id,
-        "redirect_uri": c.app_base_url + "/api/v1/auth/google/callback",
+        "redirect_uri": c.app_base_url + "/api/auth/google/callback",
         "response_type": "code",
         "scope": "openid email profile",
         "state": state,
@@ -136,7 +136,7 @@ def google_start():
     response.set_cookie(
         OAUTH_COOKIE,
         f"{state}.{nonce}.{verifier}",
-        path="/api/v1/auth/google",
+        path="/api/auth/google",
         max_age=600,
         httponly=True,
         secure=c.secure,
@@ -154,7 +154,7 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
         return JSONResponse({"error": "invalid OAuth state"}, status_code=400)
     verifier = parts[2]
     response = RedirectResponse(c.app_base_url + "/", status_code=302)
-    response.delete_cookie(OAUTH_COOKIE, path="/api/v1/auth/google", max_age=-1)
+    response.delete_cookie(OAUTH_COOKIE, path="/api/auth/google", max_age=-1)
     import httpx
 
     try:
@@ -165,7 +165,7 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
                     "code": code,
                     "client_id": c.google_client_id,
                     "client_secret": c.google_client_secret,
-                    "redirect_uri": c.app_base_url + "/api/v1/auth/google/callback",
+                    "redirect_uri": c.app_base_url + "/api/auth/google/callback",
                     "grant_type": "authorization_code",
                     "code_verifier": verifier,
                 },

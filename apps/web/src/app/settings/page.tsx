@@ -149,14 +149,14 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
         {calendarConnected === null ? <p>Checking Calendar connection…</p> : calendarConnected ? (
           <div className="row"><span>Connected</span><button onClick={disconnectCalendar}>Disconnect</button></div>
         ) : (
-          <a className="button" href="/api/v1/integrations/google/calendar/start">Connect Google Calendar</a>
+          <a className="button" href="/api/integrations/google/calendar/start">Connect Google Calendar</a>
         )}
         <p className="muted">Confirmed deadlines are synced to a dedicated HackTrack calendar. Disconnecting revokes access but leaves that calendar in Google.</p>
       </div>
 
       <h2>Account</h2>
       <div className="row">
-        <a className="button" href="/api/v1/me/export">Download my data</a>
+        <a className="button" href="/api/me/export">Download my data</a>
         <button onClick={deleteAccount}>Delete account</button>
         <button onClick={logout}>Sign out</button>
       </div>

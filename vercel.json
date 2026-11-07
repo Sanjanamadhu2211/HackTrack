@@ -27,7 +27,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/v1/cron/reminders", "schedule": "0 8 * * *" },
-    { "path": "/api/v1/cron/calendar", "schedule": "0 8 * * *" }
+    { "path": "/api/cron/reminders", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/calendar", "schedule": "0 8 * * *" }
   ]
 }
