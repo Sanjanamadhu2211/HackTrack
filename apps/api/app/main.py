@@ -1,12 +1,11 @@
 import os
-
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-from app import db
-from app.config import load_config
-from app.errors import register_error_handlers
+from app.core import database as db
+from app.core.config import load_config
+from app.core.errors import register_error_handlers
 
 
 def healthz():
@@ -20,9 +19,15 @@ def readyz():
 
 
 def _mount():
-    from app import auth, calendar, capture, hackathons, inbound, telegram, worker
+    from app.modules.identity import router as auth_router, require_user
+    from app.modules.hackathons import router as hackathons_router
+    from app.modules.capture import router as capture_router
+    from app.modules.notifications import router as notifications_router
+    from app.modules.integrations.telegram import router as telegram_router
+    from app.modules.integrations.calendar import router as calendar_router
+    from app.modules.integrations.email import router as email_router
 
-    api = FastAPI()
+    api = FastAPI(title="HackTrack API")
 
     @api.middleware("http")
     async def same_origin_middleware(request: Request, call_next):
@@ -50,21 +55,19 @@ def _mount():
             )
         )
         if not machine:
-            from app.auth import require_user
-
             try:
                 require_user(request)
             except Exception:
                 return JSONResponse({"error": "not signed in"}, status_code=401)
         return await call_next(request)
 
-    api.include_router(auth.router, prefix="/api")
-    api.include_router(hackathons.router, prefix="/api")
-    api.include_router(capture.router, prefix="/api")
-    api.include_router(telegram.router, prefix="/api")
-    api.include_router(inbound.router, prefix="/api")
-    api.include_router(calendar.router, prefix="/api")
-    api.include_router(worker.router, prefix="/api")
+    api.include_router(auth_router, prefix="/api")
+    api.include_router(hackathons_router, prefix="/api")
+    api.include_router(capture_router, prefix="/api")
+    api.include_router(telegram_router, prefix="/api")
+    api.include_router(email_router, prefix="/api")
+    api.include_router(calendar_router, prefix="/api")
+    api.include_router(notifications_router, prefix="/api")
     register_error_handlers(api)
     return api
 
