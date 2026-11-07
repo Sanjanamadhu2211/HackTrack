@@ -80,7 +80,7 @@ def _mac_for(key: bytes, user_id: str, state: str, verifier: str) -> str:
 
 
 def _delete_oauth_cookie(response):
-    response.delete_cookie(OAUTH_COOKIE, path=COOKIE_PATH, max_age=-1)
+    response.delete_cookie(OAUTH_COOKIE, path=COOKIE_PATH, httponly=True, secure=_is_secure(), samesite="lax")
     return response
 
 

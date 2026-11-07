@@ -166,7 +166,7 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
         return JSONResponse({"error": "invalid OAuth state", "detail": "OAuth state cookie is missing or does not match query state"}, status_code=400)
     verifier = parts[2]
     response = RedirectResponse(c.app_base_url + "/", status_code=302)
-    response.delete_cookie(OAUTH_COOKIE, path="/api/auth/google", max_age=-1)
+    response.delete_cookie(OAUTH_COOKIE, path="/api/auth/google", httponly=True, secure=c.secure, samesite="lax")
     import httpx
 
     try:
