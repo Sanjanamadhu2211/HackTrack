@@ -43,10 +43,9 @@ def load_config():
     if c.secure:
         need("GOOGLE_CLIENT_ID", c.google_client_id)
         need("GOOGLE_CLIENT_SECRET", c.google_client_secret)
-        need("TELEGRAM_BOT_TOKEN", c.telegram_bot_token)
-        need("TELEGRAM_BOT_USERNAME", c.telegram_bot_username)
-        need("TELEGRAM_WEBHOOK_SECRET", c.telegram_webhook_secret)
-        need("CRON_SECRET", c.cron_secret)
+        if c.telegram_bot_token:
+            need("TELEGRAM_BOT_USERNAME", c.telegram_bot_username)
+            need("TELEGRAM_WEBHOOK_SECRET", c.telegram_webhook_secret)
     if missing:
         raise RuntimeError(f"missing required env: {', '.join(missing)}")
     u = urlparse(c.app_base_url)

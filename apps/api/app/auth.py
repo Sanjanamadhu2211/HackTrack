@@ -1,3 +1,4 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -7,6 +8,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from app import db, tokens
 from app.config import load_config
 from app.errors import Invalid, NotFound, body_bytes
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -108,50 +111,59 @@ def me_payload(user_id):
 
 @router.get("/auth/google/start")
 def google_start():
-    c = cfg()
-    if not c.google_client_id:
-        return JSONResponse({"error": "Google sign-in not configured"}, status_code=503)
-    state, _ = tokens.new_token()
-    nonce, _ = tokens.new_token()
-    verifier, _ = tokens.new_token()
-    challenge = (
-        __import__("base64").urlsafe_b64encode(__import__("hashlib").sha256(verifier.encode()).digest())
-        .rstrip(b"=")
-        .decode()
-    )
-    from urllib.parse import urlencode
+    try:
+        c = cfg()
+        if not c.google_client_id:
+            return JSONResponse({"error": "Google sign-in not configured", "detail": "GOOGLE_CLIENT_ID environment variable is missing"}, status_code=503)
+        state, _ = tokens.new_token()
+        nonce, _ = tokens.new_token()
+        verifier, _ = tokens.new_token()
+        challenge = (
+            __import__("base64").urlsafe_b64encode(__import__("hashlib").sha256(verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        from urllib.parse import urlencode
 
-    params = {
-        "client_id": c.google_client_id,
-        "redirect_uri": c.app_base_url + "/api/auth/google/callback",
-        "response_type": "code",
-        "scope": "openid email profile",
-        "state": state,
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-        "nonce": nonce,
-        "prompt": "select_account",
-    }
-    response = RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params), status_code=302)
-    response.set_cookie(
-        OAUTH_COOKIE,
-        f"{state}.{nonce}.{verifier}",
-        path="/api/auth/google",
-        max_age=600,
-        httponly=True,
-        secure=c.secure,
-        samesite="lax",
-    )
-    return response
+        params = {
+            "client_id": c.google_client_id,
+            "redirect_uri": c.app_base_url + "/api/auth/google/callback",
+            "response_type": "code",
+            "scope": "openid email profile",
+            "state": state,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "nonce": nonce,
+            "prompt": "select_account",
+        }
+        response = RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params), status_code=302)
+        response.set_cookie(
+            OAUTH_COOKIE,
+            f"{state}.{nonce}.{verifier}",
+            path="/api/auth/google",
+            max_age=600,
+            httponly=True,
+            secure=c.secure,
+            samesite="lax",
+        )
+        return response
+    except Exception as exc:
+        logger.exception("google_start failed: %s", exc)
+        return JSONResponse({"error": "google_start failed", "detail": str(exc)}, status_code=500)
 
 
 @router.get("/auth/google/callback")
 async def google_callback(request: Request, code: str = "", state: str = ""):
-    c = cfg()
+    try:
+        c = cfg()
+    except Exception as exc:
+        logger.exception("google_callback: config load failed: %s", exc)
+        return JSONResponse({"error": "server config error", "detail": str(exc)}, status_code=500)
+
     cookie = request.cookies.get(OAUTH_COOKIE, "")
     parts = cookie.split(".")
     if len(parts) != 3 or not tokens.constant_time_equal(parts[0], state):
-        return JSONResponse({"error": "invalid OAuth state"}, status_code=400)
+        return JSONResponse({"error": "invalid OAuth state", "detail": "OAuth state cookie is missing or does not match query state"}, status_code=400)
     verifier = parts[2]
     response = RedirectResponse(c.app_base_url + "/", status_code=302)
     response.delete_cookie(OAUTH_COOKIE, path="/api/auth/google", max_age=-1)
@@ -173,46 +185,63 @@ async def google_callback(request: Request, code: str = "", state: str = ""):
             res.raise_for_status()
             token_data = res.json()
             id_token = token_data.get("id_token", "")
-    except Exception:
-        return JSONResponse({"error": "code exchange failed"}, status_code=400)
+    except Exception as exc:
+        logger.exception("google_callback: code exchange failed: %s", exc)
+        detail = str(exc)
+        if 'res' in locals() and hasattr(res, 'text'):
+            detail = f"{exc}: {res.text}"
+        return JSONResponse({"error": "code exchange failed", "detail": detail}, status_code=400)
     if not id_token:
-        return JSONResponse({"error": "missing id_token"}, status_code=400)
+        return JSONResponse({"error": "missing id_token", "detail": "Google token response did not contain an id_token"}, status_code=400)
     segments = id_token.split(".")
     if len(segments) != 3:
-        return JSONResponse({"error": "malformed id_token"}, status_code=400)
+        return JSONResponse({"error": "malformed id_token", "detail": "id_token does not have 3 JWT segments"}, status_code=400)
     try:
         import base64
         import json as json_mod
 
         payload = segments[1] + "=" * (-len(segments[1]) % 4)
         claims = json_mod.loads(base64.urlsafe_b64decode(payload).decode())
-    except Exception:
-        return JSONResponse({"error": "malformed id_token"}, status_code=400)
+    except Exception as exc:
+        return JSONResponse({"error": "malformed id_token", "detail": str(exc)}, status_code=400)
     if claims.get("iss") not in ("https://accounts.google.com", "accounts.google.com"):
-        return JSONResponse({"error": "bad issuer"}, status_code=400)
+        return JSONResponse({"error": "bad issuer", "detail": f"Issuer {claims.get('iss')} is not Google"}, status_code=400)
     if claims.get("aud") != c.google_client_id:
-        return JSONResponse({"error": "bad audience"}, status_code=400)
+        return JSONResponse({"error": "bad audience", "detail": "Audience does not match configured google_client_id"}, status_code=400)
     if not claims.get("sub"):
-        return JSONResponse({"error": "missing subject"}, status_code=400)
+        return JSONResponse({"error": "missing subject", "detail": "id_token claims lack sub"}, status_code=400)
     if time.time() > int(claims.get("exp", 0)):
-        return JSONResponse({"error": "id_token expired"}, status_code=400)
+        return JSONResponse({"error": "id_token expired", "detail": "Token exp is in the past"}, status_code=400)
     if not tokens.constant_time_equal(claims.get("nonce", ""), parts[1]):
-        return JSONResponse({"error": "bad nonce"}, status_code=400)
+        return JSONResponse({"error": "bad nonce", "detail": "Nonce does not match state nonce"}, status_code=400)
     if not claims.get("email_verified") or not claims.get("email"):
-        return JSONResponse({"error": "email not verified"}, status_code=400)
+        return JSONResponse({"error": "email not verified", "detail": "Google email is missing or not marked verified"}, status_code=400)
     try:
         with db.connect() as conn:
             with conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO users (google_sub, email, name) VALUES (%s, %s, %s) "
-                        "ON CONFLICT (google_sub) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name, updated_at = now() RETURNING id",
-                        (claims["sub"], claims["email"].lower(), claims.get("name", "")),
-                    )
-                    user_id = cur.fetchone()["id"]
+                    cur.execute("SELECT id FROM users WHERE google_sub = %s", (claims["sub"],))
+                    row = cur.fetchone()
+                    if not row:
+                        cur.execute("SELECT id FROM users WHERE email = %s", (claims["email"].lower(),))
+                        row = cur.fetchone()
+
+                    if row:
+                        user_id = row["id"]
+                        cur.execute(
+                            "UPDATE users SET google_sub = %s, email = %s, name = COALESCE(NULLIF(%s, ''), name), updated_at = now() WHERE id = %s",
+                            (claims["sub"], claims["email"].lower(), claims.get("name", ""), user_id),
+                        )
+                    else:
+                        cur.execute(
+                            "INSERT INTO users (google_sub, email, name) VALUES (%s, %s, %s) RETURNING id",
+                            (claims["sub"], claims["email"].lower(), claims.get("name", "")),
+                        )
+                        user_id = cur.fetchone()["id"]
                     token, expiry = create_session(conn, str(user_id))
-    except Exception:
-        return JSONResponse({"error": "internal error"}, status_code=500)
+    except Exception as exc:
+        logger.exception("google_callback: db upsert/session failed: %s", exc)
+        return JSONResponse({"error": "database error", "detail": str(exc)}, status_code=500)
     set_session_cookie(response, token, expiry)
     return response
 
@@ -234,7 +263,8 @@ async def dev_login(request: Request):
                     )
                     user_id = cur.fetchone()["id"]
                     token, expiry = create_session(conn, str(user_id))
-    except Exception:
+    except Exception as exc:
+        logger.exception("dev_login failed: %s", exc)
         return JSONResponse({"error": "internal error"}, status_code=500)
     response = JSONResponse({"id": str(user_id)})
     set_session_cookie(response, token, expiry)
