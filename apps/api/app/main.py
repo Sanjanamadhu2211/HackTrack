@@ -58,13 +58,13 @@ def _mount():
                 return JSONResponse({"error": "not signed in"}, status_code=401)
         return await call_next(request)
 
-    api.include_router(auth.router, prefix="/api/v1")
-    api.include_router(hackathons.router, prefix="/api/v1")
-    api.include_router(capture.router, prefix="/api/v1")
-    api.include_router(telegram.router, prefix="/api/v1")
-    api.include_router(inbound.router, prefix="/api/v1")
-    api.include_router(calendar.router, prefix="/api/v1")
-    api.include_router(worker.router, prefix="/api/v1")
+    api.include_router(auth.router, prefix="/api")
+    api.include_router(hackathons.router, prefix="/api")
+    api.include_router(capture.router, prefix="/api")
+    api.include_router(telegram.router, prefix="/api")
+    api.include_router(inbound.router, prefix="/api")
+    api.include_router(calendar.router, prefix="/api")
+    api.include_router(worker.router, prefix="/api")
     register_error_handlers(api)
     return api
 

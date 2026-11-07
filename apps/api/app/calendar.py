@@ -19,7 +19,7 @@ from app.auth import require_user_dependency
 router = APIRouter()
 
 OAUTH_COOKIE = "ht_calendar_oauth"
-COOKIE_PATH = "/api/v1/integrations/google/calendar"
+COOKIE_PATH = "/api/integrations/google/calendar"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -123,7 +123,7 @@ def calendar_start(user_id: str = Depends(require_user_dependency)):
     base = _app_base()
     params = {
         "client_id": client_id,
-        "redirect_uri": base + "/api/v1/integrations/google/calendar/callback",
+        "redirect_uri": base + "/api/integrations/google/calendar/callback",
         "response_type": "code",
         "scope": CAL_SCOPE,
         "state": state,
@@ -181,7 +181,7 @@ def calendar_callback(
                     "code": code,
                     "client_id": client_id,
                     "client_secret": client_secret,
-                    "redirect_uri": base + "/api/v1/integrations/google/calendar/callback",
+                    "redirect_uri": base + "/api/integrations/google/calendar/callback",
                     "grant_type": "authorization_code",
                     "code_verifier": verifier,
                 },

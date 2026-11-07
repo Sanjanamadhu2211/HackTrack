@@ -1,4 +1,4 @@
-// Thin client for the Go API. Every call goes to /api/v1 on this origin;
+// Thin client for the Python FastAPI app. Every call goes to /api on this origin;
 // next.config.ts proxies it to the API service.
 
 export type Mode = "ONLINE" | "OFFLINE" | "HYBRID";
@@ -95,7 +95,7 @@ export class ApiError extends Error {
 }
 
 export async function api<T = unknown>(path: string, init?: { method?: string; body?: unknown }): Promise<T> {
-  const res = await fetch(`/api/v1${path}`, {
+  const res = await fetch(`/api${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
     headers: init?.body === undefined ? undefined : { "Content-Type": "application/json" },
