@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, localToISO } from "@/lib/api";
 import { clearPendingCreate, pendingCreateKey } from "@/lib/pendingCreate";
@@ -26,9 +27,7 @@ export default function NewHackathonPage() {
   });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // The idempotency key lives on the payload's fingerprint, not the form
-  // instance: a retry after a reload or a lost response reuses the server
-  // request, so the server returns the original event instead of a duplicate.
+
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setF({ ...f, [k]: e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value });
 
@@ -63,8 +62,6 @@ export default function NewHackathonPage() {
         method: "POST",
         body: { ...payload, idempotency_key: idempotencyKey },
       });
-      // Confirmed: the create succeeded, so the next same-shaped save is a
-      // new event with a new key.
       await clearPendingCreate(payload);
       router.push(`/hackathons/${id}`);
     } catch (err) {
@@ -74,23 +71,35 @@ export default function NewHackathonPage() {
   }
 
   return (
-    <>
-      <h1>Add a hackathon</h1>
-      <form className="stack panel" onSubmit={submit}>
+    <div className="stack" style={{ maxWidth: 720, margin: "0 auto", gap: 24 }}>
+      <div>
+        <Link href="/" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: 4, marginBottom: 12 }}>
+          ← Back to Dashboard
+        </Link>
+        <h1>Add a Hackathon</h1>
+        <p className="muted">
+          Add an event manually with key deadlines. Dates you specify here are automatically confirmed for reminders.
+        </p>
+      </div>
+
+      <form className="panel stack" onSubmit={submit}>
         <label>
-          Title
-          <input required value={f.title} onChange={set("title")} autoFocus />
+          Event Title *
+          <input required placeholder="e.g. HackMIT 2026" value={f.title} onChange={set("title")} autoFocus />
         </label>
+
         <label>
-          Event page URL
-          <input type="url" value={f.source_url} onChange={set("source_url")} placeholder="https://" />
+          Event Page / Registration URL
+          <input type="url" value={f.source_url} onChange={set("source_url")} placeholder="https://..." />
         </label>
+
         <label>
           Organizer
-          <input value={f.organizer} onChange={set("organizer")} />
+          <input placeholder="e.g. MIT Tech Club, MLH, Devpost" value={f.organizer} onChange={set("organizer")} />
         </label>
+
         <div className="row">
-          <label>
+          <label style={{ flex: 1 }}>
             Mode
             <select value={f.mode} onChange={set("mode")}>
               <option value="ONLINE">Online</option>
@@ -98,56 +107,75 @@ export default function NewHackathonPage() {
               <option value="HYBRID">Hybrid</option>
             </select>
           </label>
-          <label>
-            Event timezone
+          <label style={{ flex: 1 }}>
+            Event Timezone
             <input value={f.event_timezone} onChange={set("event_timezone")} />
           </label>
         </div>
+
         {f.mode !== "ONLINE" && (
           <div className="row">
-            <label>
+            <label style={{ flex: 1 }}>
               Venue
-              <input value={f.venue} onChange={set("venue")} />
+              <input placeholder="Building, hall, or room" value={f.venue} onChange={set("venue")} />
             </label>
-            <label>
-              City
-              <input value={f.location} onChange={set("location")} />
+            <label style={{ flex: 1 }}>
+              City / State
+              <input placeholder="e.g. San Francisco, CA" value={f.location} onChange={set("location")} />
             </label>
           </div>
         )}
+
         <div className="row">
-          <label>
-            Starts
+          <label style={{ flex: 1 }}>
+            Event Starts
             <input type="datetime-local" value={f.starts_at} onChange={set("starts_at")} />
           </label>
-          <label>
-            Ends
+          <label style={{ flex: 1 }}>
+            Event Ends
             <input type="datetime-local" value={f.ends_at} onChange={set("ends_at")} />
           </label>
         </div>
-        <label className="row">
-          <input type="checkbox" checked={f.registered} onChange={set("registered")} /> I have already registered
-        </label>
-        {!f.registered && (
-          <label>
-            Registration deadline (optional)
-            <input type="datetime-local" value={f.register_by} onChange={set("register_by")} />
+
+        <div className="panel" style={{ background: "var(--panel)", padding: 14 }}>
+          <label className="row" style={{ cursor: "pointer", marginBottom: 12 }}>
+            <input type="checkbox" checked={f.registered} onChange={set("registered")} />
+            <strong>I have already registered for this event</strong>
           </label>
-        )}
-        <label>
-          Submission deadline (optional)
-          <input type="datetime-local" value={f.submit_by} onChange={set("submit_by")} />
-        </label>
-        <label className="row">
-          <input type="checkbox" checked={f.submit_date_only} onChange={set("submit_date_only")} /> Only the date is known (end of
-          day in the event timezone)
-        </label>
-        <p className="muted">Times are in your browser&apos;s timezone. Dates you type here count as confirmed.</p>
-        <button className="primary" disabled={busy}>
-          Save event
-        </button>
-        {error && <p className="error">{error}</p>}
+
+          {!f.registered && (
+            <label style={{ marginBottom: 12 }}>
+              Registration Deadline (optional)
+              <input type="datetime-local" value={f.register_by} onChange={set("register_by")} />
+            </label>
+          )}
+
+          <label>
+            Submission Deadline (optional)
+            <input type="datetime-local" value={f.submit_by} onChange={set("submit_by")} />
+          </label>
+
+          <label className="row" style={{ cursor: "pointer", marginTop: 8 }}>
+            <input type="checkbox" checked={f.submit_date_only} onChange={set("submit_date_only")} />
+            <span className="muted">Only date is known (end of day in the event timezone)</span>
+          </label>
+        </div>
+
+        <p className="muted faint" style={{ margin: 0 }}>
+          Times entered above use your browser timezone ({browserTZ()}).
+        </p>
+
+        <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" onClick={() => router.push("/")}>
+            Cancel
+          </button>
+          <button className="primary" disabled={busy}>
+            {busy ? "Saving event…" : "Save Event"}
+          </button>
+        </div>
+
+        {error && <p className="error" role="alert">{error}</p>}
       </form>
-    </>
+    </div>
   );
 }

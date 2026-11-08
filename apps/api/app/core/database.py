@@ -1,11 +1,16 @@
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import psycopg
+from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
+
+_pool: ConnectionPool | None = None
+_pool_url: str | None = None
 
 
 def _neon_ssl_url(url: str) -> str:
@@ -20,16 +25,73 @@ def _neon_ssl_url(url: str) -> str:
         return url
 
 
+def get_pool(url: str | None = None) -> ConnectionPool:
+    global _pool, _pool_url
+    raw = url or os.getenv("DATABASE_URL", "")
+    if "neon.tech" in raw:
+        raw = _neon_ssl_url(raw)
+    if _pool is None or _pool.closed or _pool_url != raw:
+        if _pool and not _pool.closed:
+            try:
+                _pool.close()
+            except Exception:
+                pass
+        _pool_url = raw
+        _pool = ConnectionPool(
+            conninfo=raw,
+            min_size=1,
+            max_size=10,
+            timeout=15.0,
+            kwargs={
+                "row_factory": psycopg.rows.dict_row,
+                "autocommit": False,
+                "connect_timeout": 10,
+            },
+            open=True,
+        )
+    return _pool
+
+
+def close_pool() -> None:
+    global _pool, _pool_url
+    if _pool and not _pool.closed:
+        try:
+            _pool.close()
+        except Exception:
+            pass
+    _pool = None
+    _pool_url = None
+
+
+@contextmanager
 def connect(url: str | None = None):
     raw = url or os.getenv("DATABASE_URL", "")
     if "neon.tech" in raw:
         raw = _neon_ssl_url(raw)
-    return psycopg.connect(
-        raw,
-        row_factory=psycopg.rows.dict_row,
-        autocommit=False,
-        connect_timeout=10,
-    )
+    default_url = os.getenv("DATABASE_URL", "")
+    if url and url != default_url:
+        with psycopg.connect(
+            raw,
+            row_factory=psycopg.rows.dict_row,
+            autocommit=False,
+            connect_timeout=10,
+        ) as conn:
+            yield conn
+        return
+
+    try:
+        pool = get_pool(raw)
+        with pool.connection() as conn:
+            yield conn
+    except Exception as exc:
+        logger.warning("Connection pool acquisition failed, falling back to direct connect: %s", exc)
+        with psycopg.connect(
+            raw,
+            row_factory=psycopg.rows.dict_row,
+            autocommit=False,
+            connect_timeout=10,
+        ) as conn:
+            yield conn
 
 
 def ready(url: str | None = None) -> bool:
