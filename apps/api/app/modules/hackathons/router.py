@@ -171,6 +171,20 @@ def _fetch_milestones(conn, hackathon_id):
         return cur.fetchall()
 
 
+def _batch_fetch_milestones(conn, hackathon_ids: list[str]) -> dict[str, list]:
+    if not hackathon_ids:
+        return {}
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT * FROM milestones WHERE hackathon_id = ANY(%s) ORDER BY due_at ASC NULLS LAST, created_at ASC",
+            (hackathon_ids,),
+        )
+        res = {str(hid): [] for hid in hackathon_ids}
+        for row in cur.fetchall():
+            res[str(row["hackathon_id"])].append(row)
+        return res
+
+
 def _unacked_final(conn, hackathon_id):
     with conn.cursor() as cur:
         cur.execute(
@@ -186,6 +200,21 @@ def _unacked_final(conn, hackathon_id):
             return False
         # psycopg dict row for EXISTS column name is 'exists'
         return bool(row.get("exists", False))
+
+
+def _batch_unacked_final(conn, hackathon_ids: list[str]) -> set[str]:
+    if not hackathon_ids:
+        return set()
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT DISTINCT m.hackathon_id FROM notification_deliveries d "
+            "JOIN notification_jobs j ON j.id = d.job_id "
+            "JOIN milestones m ON m.id = j.milestone_id "
+            "WHERE m.hackathon_id = ANY(%s) AND j.final AND d.sent_at IS NOT NULL AND d.acknowledged_at IS NULL",
+            (hackathon_ids,),
+        )
+        return {str(row["hackathon_id"]) for row in cur.fetchall()}
+
 
 
 def _load_hackathon_row(conn, user_id, hackathon_id):
@@ -435,9 +464,13 @@ def list_hackathons(request: Request, user_id: str = Depends(require_user_depend
             if to_q:
                 to_dt = _parse_rfc3339(to_q, "to must be an RFC 3339 time")
             items = []
+            hids = [str(r["id"]) for r in rows]
+            milestones_by_hid = _batch_fetch_milestones(conn, hids)
+            unacked_hids = _batch_unacked_final(conn, hids)
             for row in rows:
-                milestones = _fetch_milestones(conn, str(row["id"]))
-                unacked = _unacked_final(conn, str(row["id"]))
+                hid_str = str(row["id"])
+                milestones = milestones_by_hid.get(hid_str, [])
+                unacked = hid_str in unacked_hids
                 detail = _serialize_hackathon(row, milestones, now, unacked)
                 # filters
                 if bucket_filter and detail["bucket"] != bucket_filter:
@@ -482,11 +515,16 @@ def dashboard(request: Request, user_id: str = Depends(require_user_dependency))
                 rows = cur.fetchall()
             now = datetime.now(timezone.utc)
             buckets = {"needs_action": [], "upcoming": [], "in_progress": [], "done": [], "archived": []}
+            hids = [str(r["id"]) for r in rows]
+            milestones_by_hid = _batch_fetch_milestones(conn, hids)
+            unacked_hids = _batch_unacked_final(conn, hids)
             for row in rows:
-                milestones = _fetch_milestones(conn, str(row["id"]))
-                unacked = _unacked_final(conn, str(row["id"]))
+                hid_str = str(row["id"])
+                milestones = milestones_by_hid.get(hid_str, [])
+                unacked = hid_str in unacked_hids
                 detail = _serialize_hackathon(row, milestones, now, unacked, blank_description=True, blank_milestones=True)
                 buckets[detail["bucket"]].append(detail)
+
             # order bucket items? Keep starts_at NULLS LAST, created_at DESC like list for consistency
             def _sort_key_d(d):
                 # d starts_at is iso string or None; use string comparison fallback
