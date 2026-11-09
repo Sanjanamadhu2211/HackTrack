@@ -43,6 +43,10 @@ def clear_session_cookie(response: Response) -> None:
 
 
 def require_user(request: Request) -> str:
+    # Middleware validates once per request; dependencies reuse that result.
+    user_id = getattr(request.state, "authenticated_user_id", None)
+    if user_id:
+        return user_id
     raw = request.cookies.get(SESSION_COOKIE, "")
     if not raw:
         raise NotFound()
@@ -53,6 +57,7 @@ def require_user(request: Request) -> str:
         raise RuntimeError("database unavailable")
     if not user_id:
         raise NotFound()
+    request.state.authenticated_user_id = user_id
     return user_id
 
 

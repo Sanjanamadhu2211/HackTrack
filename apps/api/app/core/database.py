@@ -79,11 +79,18 @@ def connect(url: str | None = None):
             yield conn
         return
 
+    # Only acquisition may fall back to a direct connection. Once the pooled
+    # connection is handed to the caller, an exception belongs to the caller's
+    # work (or to commit/rollback) and must propagate instead of being retried.
+    acquired = False
     try:
         pool = get_pool(raw)
         with pool.connection() as conn:
+            acquired = True
             yield conn
     except Exception as exc:
+        if acquired:
+            raise
         logger.warning("Connection pool acquisition failed, falling back to direct connect: %s", exc)
         with psycopg.connect(
             raw,

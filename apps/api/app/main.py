@@ -1,11 +1,12 @@
 import os
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.core import database as db
 from app.core.config import load_config
-from app.core.errors import register_error_handlers
+from app.core.errors import NotFound, register_error_handlers
 
 
 def healthz():
@@ -56,9 +57,12 @@ def _mount():
         )
         if not machine:
             try:
-                require_user(request)
-            except Exception:
+                # Sync DB lookup must not block the event loop.
+                await run_in_threadpool(require_user, request)
+            except NotFound:
                 return JSONResponse({"error": "not signed in"}, status_code=401)
+            except RuntimeError:
+                return JSONResponse({"error": "database unavailable"}, status_code=503)
         return await call_next(request)
 
     api.include_router(auth_router, prefix="/api")
