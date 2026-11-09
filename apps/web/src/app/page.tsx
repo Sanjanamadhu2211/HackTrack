@@ -81,20 +81,19 @@ export default function DashboardPage() {
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 20 }}>
+      <div className="page-header">
         <div>
           <h1>Dashboard</h1>
           <p className="muted" style={{ margin: 0 }}>
             Every hackathon with an active next action in your timezone ({me.timezone}).
           </p>
         </div>
-        <div className="row">
+        <div className="toolbar">
           <input
             type="search"
             placeholder="Search events…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ width: 180 }}
             aria-label="Search events"
           />
           <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Filter by mode">

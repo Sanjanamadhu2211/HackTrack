@@ -28,7 +28,7 @@ export default function Navbar() {
         </Link>
 
         {!isAuthPage && (
-          <nav className="nav-links">
+          <nav className="nav-links" aria-label="Primary">
             {NAV_LINKS.map(({ href, label }) => {
               const active = pathname === href || (href !== "/" && pathname.startsWith(href));
               return (
@@ -36,6 +36,7 @@ export default function Navbar() {
                   key={href}
                   href={href}
                   className={`nav-link${active ? " active" : ""}`}
+                  aria-current={active ? "page" : undefined}
                 >
                   {label}
                 </Link>

@@ -115,6 +115,20 @@ body {
   flex-direction: column;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Visible keyboard focus for interactive elements
+   (inputs/selects/textareas keep their existing focus ring) */
+a:focus-visible,
+button:focus-visible,
+.button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 /* Header & Navigation */
 header.top {
   position: sticky;
@@ -163,6 +177,7 @@ header.top {
   display: flex;
   align-items: center;
   gap: 4px;
+  scrollbar-width: none;
 }
 
 .nav-link {
@@ -189,7 +204,22 @@ header.top {
 .nav-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+}
+
+/* Icon button (theme toggle) — previously unstyled */
+.theme-toggle {
+  padding: 6px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.theme-toggle:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--line);
+  color: var(--ink);
+  transform: none;
 }
 
 .user-badge {
@@ -226,6 +256,31 @@ header.top {
   white-space: nowrap;
 }
 
+/* Page header & toolbar (dashboard) */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-bottom: 20px;
+}
+
+.page-header h1 {
+  margin: 0 0 4px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.toolbar input {
+  width: 180px;
+}
+
 /* Main Container */
 main.main-content {
   flex: 1;
@@ -241,6 +296,7 @@ h1 {
   letter-spacing: -0.03em;
   margin: 0 0 16px;
   color: var(--ink);
+  text-wrap: balance;
 }
 
 h2 {
@@ -252,6 +308,10 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+h2 .badge {
+  margin-left: 2px;
 }
 
 /* Panels & Cards */
@@ -325,6 +385,7 @@ h2 {
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.2;
+  font-variant-numeric: tabular-nums;
 }
 
 .stats .panel span {
@@ -347,6 +408,7 @@ h2 {
   border: 1px solid var(--line);
   color: var(--muted);
   background: var(--panel);
+  white-space: nowrap;
 }
 
 .badge.ok {
@@ -612,6 +674,15 @@ p.error {
   margin-top: 24px;
 }
 
+.empty-state h2 {
+  margin-top: 0;
+}
+
+.empty-state h2,
+.empty-state .row {
+  justify-content: center;
+}
+
 .empty-icon {
   font-size: 2.5rem;
   margin-bottom: 12px;
@@ -619,10 +690,15 @@ p.error {
 
 /* Responsive adjustments */
 @media (max-width: 768px) {
+  h1 {
+    font-size: 1.4rem;
+  }
+
   .header-inner {
     padding: 10px 16px;
     flex-wrap: wrap;
   }
+
   .nav-links {
     order: 3;
     width: 100%;
@@ -630,10 +706,64 @@ p.error {
     padding-top: 6px;
     gap: 2px;
   }
+
+  .nav-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .user-email {
+    max-width: 90px;
+  }
+
   main.main-content {
     padding: 18px 16px 48px;
   }
+
   .grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stats .panel {
+    padding: 14px;
+  }
+
+  .stats .panel strong {
+    font-size: 1.5rem;
+  }
+
+  .toolbar {
+    width: 100%;
+  }
+
+  .toolbar input {
+    flex: 1 1 140px;
+    width: auto;
+  }
+}
+
+/* Comfortable tap targets on touch devices */
+@media (pointer: coarse) {
+  button:not(.theme-toggle),
+  .button,
+  .nav-link {
+    min-height: 40px;
+  }
+}
+
+/* Respect reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
