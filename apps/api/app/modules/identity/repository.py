@@ -46,7 +46,8 @@ def get_user_profile(user_id: str) -> dict:
                 "SELECT u.id, u.email, u.name, u.timezone, "
                 "to_char(u.quiet_hours_start,'HH24:MI') AS qs, "
                 "to_char(u.quiet_hours_end,'HH24:MI') AS qe, u.reminder_cap_per_day, "
-                "EXISTS(SELECT 1 FROM telegram_links t WHERE t.user_id = u.id AND t.chat_id IS NOT NULL) AS linked "
+                "EXISTS(SELECT 1 FROM discord_links d WHERE d.user_id = u.id AND d.channel_id IS NOT NULL) AS discord_linked, "
+                "EXISTS(SELECT 1 FROM telegram_links t WHERE t.user_id = u.id AND t.chat_id IS NOT NULL) AS telegram_linked "
                 "FROM users u WHERE u.id = %s",
                 (user_id,),
             )
@@ -61,7 +62,8 @@ def get_user_profile(user_id: str) -> dict:
         "quiet_hours_start": row["qs"],
         "quiet_hours_end": row["qe"],
         "reminder_cap_per_day": row["reminder_cap_per_day"],
-        "telegram_linked": bool(row["linked"]),
+        "discord_linked": bool(row["discord_linked"]),
+        "telegram_linked": bool(row["telegram_linked"]),
     }
 
 

@@ -12,6 +12,9 @@ class Config:
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""
     telegram_webhook_secret: str = ""
+    discord_application_id: str = ""
+    discord_public_key: str = ""
+    discord_bot_token: str = ""
     cron_secret: str = ""
     dev_login: bool = False
 
@@ -29,6 +32,9 @@ def load_config():
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
         telegram_bot_username=os.getenv("TELEGRAM_BOT_USERNAME", ""),
         telegram_webhook_secret=os.getenv("TELEGRAM_WEBHOOK_SECRET", ""),
+        discord_application_id=os.getenv("DISCORD_APPLICATION_ID", ""),
+        discord_public_key=os.getenv("DISCORD_PUBLIC_KEY", ""),
+        discord_bot_token=os.getenv("DISCORD_BOT_TOKEN", ""),
         cron_secret=os.getenv("CRON_SECRET", ""),
         dev_login=os.getenv("DEV_LOGIN") == "1",
     )
@@ -43,6 +49,11 @@ def load_config():
     if c.secure:
         need("GOOGLE_CLIENT_ID", c.google_client_id)
         need("GOOGLE_CLIENT_SECRET", c.google_client_secret)
+        discord = (c.discord_application_id, c.discord_public_key, c.discord_bot_token)
+        if any(discord):
+            need("DISCORD_APPLICATION_ID", c.discord_application_id)
+            need("DISCORD_PUBLIC_KEY", c.discord_public_key)
+            need("DISCORD_BOT_TOKEN", c.discord_bot_token)
         if c.telegram_bot_token:
             need("TELEGRAM_BOT_USERNAME", c.telegram_bot_username)
             need("TELEGRAM_WEBHOOK_SECRET", c.telegram_webhook_secret)

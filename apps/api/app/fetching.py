@@ -169,7 +169,7 @@ def _parse_robots(text, path):
     return allowed
 
 
-def fetch(url):
+def fetch(url, *, accept_json=False, timeout=5.0):
     current = url
     for hop in range(4):
         host = _check_url(current)
@@ -181,12 +181,12 @@ def fetch(url):
         ip = _resolve(parsed.hostname or "")
         headers = {
             "User-Agent": "HackTrackBot/0.1 (+https://hacktrack.app)",
-            "Accept": "text/html,application/xhtml+xml,text/plain;q=0.8",
+            "Accept": "application/json, text/html,application/xhtml+xml,text/plain;q=0.8" if accept_json else "text/html,application/xhtml+xml,text/plain;q=0.8",
         }
         url_to_fetch = current if parsed.hostname == ip else _url_at_ip(current, ip)
         try:
-            with httpx.Client(timeout=5.0, follow_redirects=False, proxy=None, headers=headers) as client:
-                response = client.get(url_to_fetch, headers={"Host": parsed.netloc} if parsed.hostname == ip else None)
+            with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False, headers=headers) as client:
+                response = client.get(url_to_fetch, headers={"Host": parsed.netloc}, extensions={"sni_hostname": parsed.hostname})
         except Exception as e:
             raise ValueError(f"fetch failed: {e}")
         if response.status_code in (301, 302, 303, 307, 308):
@@ -200,7 +200,7 @@ def fetch(url):
         if not (200 <= response.status_code < 300):
             raise ValueError(f"unexpected status {response.status_code}")
         media = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if media not in ("text/html", "application/xhtml+xml", "text/plain"):
+        if media not in ("text/html", "application/xhtml+xml", "text/plain") and not (accept_json and media == "application/json"):
             raise ValueError("unsupported content type")
         body = response.content[: 2 << 20]
         return current, media, body

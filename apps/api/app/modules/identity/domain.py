@@ -16,6 +16,7 @@ class User:
     quiet_hours_start: str = "23:00"
     quiet_hours_end: str = "08:00"
     reminder_cap_per_day: int = 6
+    discord_linked: bool = False
     telegram_linked: bool = False
     google_sub: Optional[str] = None
 

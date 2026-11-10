@@ -27,7 +27,9 @@
     }
   ],
   "crons": [
-    { "path": "/api/cron/reminders", "schedule": "0 8 * * *" },
+    { "path": "/api/cron/discord", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/discovery", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/reminders", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/calendar", "schedule": "0 8 */2 * *" }
   ]
 }

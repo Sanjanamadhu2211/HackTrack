@@ -82,6 +82,7 @@ export type Me = {
   quiet_hours_start: string;
   quiet_hours_end: string;
   reminder_cap_per_day: number;
+  discord_linked: boolean;
   telegram_linked: boolean;
 };
 
