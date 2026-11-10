@@ -370,11 +370,11 @@ def _ensure_confirm_dates(conn, user_id, hackathon_id, now):
         h = cur.fetchone()
     if not h:
         return
-    # other required dated confirmed TODO|DONE (non-CONFIRM)
+    # A completed registration deadline is not a future follow-up.
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT id FROM milestones WHERE hackathon_id = %s AND type <> 'CONFIRM_DATES' "
-            "AND required AND due_at IS NOT NULL AND date_confirmed AND status IN ('TODO','DONE')",
+            "SELECT id FROM milestones WHERE hackathon_id = %s AND type NOT IN ('CONFIRM_DATES','REGISTER') "
+            "AND required AND due_at IS NOT NULL AND date_confirmed AND status = 'TODO'",
             (hackathon_id,),
         )
         has_other_confirmed = cur.fetchone() is not None
@@ -415,16 +415,7 @@ def _ensure_confirm_dates(conn, user_id, hackathon_id, now):
         )
         if cur.fetchone() is not None:
             return
-        # no other TODO required dated milestone (due_at not null)
-        cur.execute(
-            "SELECT id FROM milestones WHERE hackathon_id = %s AND type <> 'CONFIRM_DATES' "
-            "AND status = 'TODO' AND required AND due_at IS NOT NULL",
-            (hackathon_id,),
-        )
-        if cur.fetchone() is not None:
-            return
-    created_at = h["created_at"] if h.get("created_at") else now
-    due_at = created_at + timedelta(hours=24)
+    due_at = now + timedelta(hours=24)
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO milestones (user_id, hackathon_id, type, title, due_at, due_precision, date_confirmed, required, status, source, version) "
@@ -609,6 +600,10 @@ async def create_hackathon(request: Request, user_id: str = Depends(require_user
     if not isinstance(user_id, str):
         return user_id
     data = await body_bytes()(request)
+    return create_hackathon_for_user(user_id, data)
+
+
+def create_hackathon_for_user(user_id, data, milestone_source="USER"):
     # archived not allowed on create
     if "archived" in data and data.get("archived") is not None:
         raise Invalid("archived can only be set on an existing event")
@@ -796,10 +791,10 @@ async def create_hackathon(request: Request, user_id: str = Depends(require_user
                     with conn.cursor() as cur:
                         cur.execute(
                             "INSERT INTO milestones (user_id, hackathon_id, type, title, due_at, due_precision, date_confirmed, required, status, due_date, depart_at, source, version) "
-                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'TODO', %s, %s, 'USER', 1) RETURNING id",
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'TODO', %s, %s, %s, 1) RETURNING id",
                             (
                                 user_id, hackathon_id, rm["type"], rm["title"], rm["due_at"], rm["due_precision"],
-                                rm["date_confirmed"], rm["required"], rm["due_date"] if rm["due_date"] else None, rm["depart_at"],
+                                rm["date_confirmed"], rm["required"], rm["due_date"] if rm["due_date"] else None, rm["depart_at"], milestone_source,
                             ),
                         )
                         mid = str(cur.fetchone()["id"])
@@ -1176,6 +1171,12 @@ async def post_transition(hackathon_id: str, request: Request, user_id: str = De
     to = data.get("to")
     if field not in ("registration_state", "participation_state", "outcome"):
         raise Invalid(f"unknown field {field}")
+    return transition_for_user(user_id, hackathon_id, field, to, data)
+
+
+def transition_for_user(user_id, hackathon_id, field, to, data, idempotent_registration=False):
+    if not _valid_uuid(hackathon_id):
+        raise NotFound()
     now = datetime.now(timezone.utc)
     try:
         with db.connect() as conn:
@@ -1185,6 +1186,8 @@ async def post_transition(hackathon_id: str, request: Request, user_id: str = De
                     h = cur.fetchone()
                 if not h:
                     raise NotFound()
+                if idempotent_registration and field == "registration_state" and to == "REGISTERED" and h[field] in ("REGISTERED", "ACCEPTED", "WAITLISTED"):
+                    return _detail_for_row(conn, h, now)
                 rules.check_transition(h, field, to)
                 previous = h[field]
                 # update

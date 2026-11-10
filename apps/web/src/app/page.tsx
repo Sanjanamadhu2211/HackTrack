@@ -6,8 +6,8 @@ import { api, formatWhen, label, type Bucket, type Dashboard, type Hackathon } f
 import { useUser } from "@/lib/UserContext";
 
 const sections: { key: Bucket; title: string; badgeColor?: string }[] = [
-  { key: "needs_action", title: "Needs Action" },
-  { key: "in_progress", title: "In Progress" },
+  { key: "needs_action", title: "Needs action" },
+  { key: "in_progress", title: "In progress" },
   { key: "upcoming", title: "Upcoming" },
   { key: "done", title: "Done" },
   { key: "archived", title: "Archived" },
@@ -78,14 +78,16 @@ export default function DashboardPage() {
     }
     return true;
   };
+  const visibleTotal = Object.values(data.buckets).reduce((count, items) => count + items.filter(filterItem).length, 0);
 
   return (
     <>
+      <div className="page-eyebrow"><span>Workspace</span><span aria-hidden="true">/</span><span>Dashboard</span></div>
       <div className="page-header">
         <div>
-          <h1>Dashboard</h1>
+          <h1>Your hackathons</h1>
           <p className="muted" style={{ margin: 0 }}>
-            Every hackathon with an active next action in your timezone ({me.timezone}).
+            Keep track of what matters next. Times shown in {me.timezone}.
           </p>
         </div>
         <div className="toolbar">
@@ -125,7 +127,7 @@ export default function DashboardPage() {
 
       {total === 0 ? (
         <div className="empty-state">
-          <div className="empty-icon">🎯</div>
+          <div className="empty-icon" aria-hidden="true">✦</div>
           <h2>No hackathons tracked yet</h2>
           <p className="muted" style={{ maxWidth: 420, margin: "0 auto 16px" }}>
             Add an upcoming event manually or capture it directly from Devpost, Unstop, or LinkedIn.
@@ -139,6 +141,12 @@ export default function DashboardPage() {
             </Link>
           </div>
         </div>
+      ) : visibleTotal === 0 ? (
+        <div className="empty-state">
+          <h2>No matching hackathons</h2>
+          <p className="muted">Try a different search or show all modes.</p>
+          <button type="button" onClick={() => { setSearch(""); setMode(""); }}>Clear filters</button>
+        </div>
       ) : (
         sections.map(({ key, title }) => {
           const items = data.buckets[key].filter(filterItem);
@@ -148,11 +156,11 @@ export default function DashboardPage() {
               <h2>
                 {title} <span className="badge">{items.length}</span>
               </h2>
-              <div className="grid">
+              <ul className="event-list">
                 {items.map((h) => (
-                  <EventCard key={h.id} h={h} tz={me.timezone} />
+                  <li key={h.id}><EventRow h={h} tz={me.timezone} /></li>
                 ))}
-              </div>
+              </ul>
             </section>
           );
         })
@@ -161,45 +169,33 @@ export default function DashboardPage() {
   );
 }
 
-function EventCard({ h, tz }: { h: Hackathon; tz: string }) {
+function EventRow({ h, tz }: { h: Hackathon; tz: string }) {
   const n = h.next_action;
   const modeBadgeClass =
     h.mode === "ONLINE" ? "ok" : h.mode === "HYBRID" ? "primary" : "amber";
 
   return (
-    <Link href={`/hackathons/${h.id}`} className="card">
-      <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
-        <strong className="card-title">{h.title}</strong>
-        <span className={`badge ${modeBadgeClass}`}>{label(h.mode)}</span>
+    <Link href={`/hackathons/${h.id}`} className="event-row">
+      <span className={`event-indicator${n?.overdue ? " overdue" : ""}`} aria-hidden="true" />
+      <div className="event-main">
+        <div className="event-heading"><strong className="card-title">{h.title}</strong><span className={`badge ${modeBadgeClass}`}>{label(h.mode)}</span></div>
+        <div className="event-meta">
+          {h.organizer && <span>{h.organizer}</span>}
+          {h.starts_at && <span>Starts {h.starts_date ? formatWhen(null, tz, "DATE", h.starts_date) : formatWhen(h.starts_at, tz)}</span>}
+        </div>
       </div>
-
-      <div className="muted" style={{ fontSize: "0.86rem", marginBottom: 6 }}>
+      <div className="event-action">
+        <span className="event-action-label">Next action</span>
+        {n ? <>
+          <span className="event-action-title">{n.title} {n.overdue && <span className="badge warn">Overdue</span>}</span>
+          {n.type !== "OUTCOME" && <span className="event-action-detail">{formatWhen(n.due_at, tz, n.due_precision, n.due_date)} · {n.confidence}</span>}
+        </> : <span className="event-action-detail">No pending action</span>}
+      </div>
+      <div className="event-status">
         <span className="badge">{label(h.registration_state)}</span>
-        {h.outcome && <span className="badge ok" style={{ marginLeft: 6 }}>{label(h.outcome)}</span>}
-        {h.organizer && <span style={{ marginLeft: 8 }}>· {h.organizer}</span>}
-      </div>
-
-      {h.starts_at && (
-        <div className="faint" style={{ marginBottom: 4 }}>
-          Starts {h.starts_date ? formatWhen(null, tz, "DATE", h.starts_date) : formatWhen(h.starts_at, tz)}
+        {h.outcome && <span className="badge ok">{label(h.outcome)}</span>}
         </div>
-      )}
-
-      {n && (
-        <div className={`next${n.overdue ? " overdue" : ""}`}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <div>
-              <strong>Next:</strong> {n.title}
-            </div>
-            {n.overdue && <span className="badge warn">Overdue</span>}
-          </div>
-          {n.type !== "OUTCOME" && (
-            <div className="muted" style={{ marginTop: 3 }}>
-              {formatWhen(n.due_at, tz, n.due_precision, n.due_date)} · {n.confidence}
-            </div>
-          )}
-        </div>
-      )}
+      <span className="event-arrow" aria-hidden="true">→</span>
     </Link>
   );
 }

@@ -86,7 +86,7 @@ def _is_live(hackathon, milestone):
     return outcome == "SUBMITTED" and milestone["type"] != "SUBMIT"
 
 
-def _invalid_state(job, milestone, hackathon, chat_id, now):
+def _invalid_state(job, milestone, hackathon, channel_id, now):
     """None when deliverable, else (state, last_error) terminal outcome."""
     if milestone is None or milestone["status"] != "TODO" or not milestone["date_confirmed"] or not _is_live(hackathon, milestone):
         return "CANCELLED", ""
@@ -94,9 +94,24 @@ def _invalid_state(job, milestone, hackathon, chat_id, now):
     due_limit = due + timedelta(minutes=30) if due and job["offset_label"] == "T-0" else due
     if due is None or now > due_limit or now - job["scheduled_at"] > reminders.staleness_window(job["offset_label"]):
         return "EXPIRED", ""
-    if chat_id is None:
-        return "FAILED", "telegram not linked"
+    if channel_id is None:
+        return "FAILED", "Discord not linked"
     return None
+
+
+def _delivery_target(cur, user_id):
+    cur.execute("SELECT channel_id, linked_at FROM discord_links WHERE user_id = %s", (user_id,))
+    link = cur.fetchone()
+    if link:
+        if link["channel_id"]:
+            return "DISCORD", link["channel_id"]
+        if link["linked_at"] is not None:
+            return None, None
+    cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
+    link = cur.fetchone()
+    if link and link["chat_id"] is not None:
+        return "TELEGRAM", link["chat_id"]
+    return None, None
 
 
 def _until(delta):
@@ -181,11 +196,9 @@ def process(connect_factory, job_id, fence, sender):
             cur.execute("SELECT * FROM hackathons WHERE id = %s", (milestone["hackathon_id"],))
             hackathon = cur.fetchone()
             user_id = str(job["user_id"])
-            cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
-            link = cur.fetchone()
-            chat_id = link["chat_id"] if link else None
+            platform, channel_id = _delivery_target(cur, user_id)
             prefs = reminders.load_prefs(conn, user_id)
-    invalid = _invalid_state(job, milestone, hackathon, chat_id, now)
+    invalid = _invalid_state(job, milestone, hackathon, channel_id, now)
     if invalid:
         _finish(connect_factory, job_id, fence, invalid[0], invalid[1])
         return False
@@ -213,10 +226,8 @@ def process(connect_factory, job_id, fence, sender):
                     return False
                 cur.execute("SELECT * FROM hackathons WHERE id = %s", (mrow["hackathon_id"],))
                 hackathon2 = cur.fetchone()
-                cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
-                link2 = cur.fetchone()
-                chat2 = link2["chat_id"] if link2 else None
-                if _invalid_state(current, mrow, hackathon2, chat2, now) is not None:
+                platform2, channel2 = _delivery_target(cur, user_id)
+                if _invalid_state(current, mrow, hackathon2, channel2, now) is not None:
                     return False
                 if _over_cap(cur, user_id, job_id, required, final, prefs, now):
                     cur.execute(
@@ -241,14 +252,13 @@ def process(connect_factory, job_id, fence, sender):
                 return False
             cur.execute("SELECT * FROM milestones WHERE id = %s", (milestone_id,))
             milestone2 = cur.fetchone()
-            cur.execute("SELECT chat_id FROM telegram_links WHERE user_id = %s", (user_id,))
-            link2 = cur.fetchone()
-            chat2 = link2["chat_id"] if link2 else None
+            platform2, channel2 = _delivery_target(cur, user_id)
             if (
                 milestone2 is None
                 or milestone2["version"] != milestone_version
-                or _invalid_state(job2, milestone2, hackathon, chat2, now) is not None
-                or chat2 != chat_id
+                or _invalid_state(job2, milestone2, hackathon, channel2, now) is not None
+                or channel2 != channel_id
+                or platform2 != platform
             ):
                 changed = True
     if changed:
@@ -265,7 +275,7 @@ def process(connect_factory, job_id, fence, sender):
         return False
 
     try:
-        message_id = sender.send_reminder(chat_id, text, delivery_id, open_url)
+        message_id = sender[platform].send_reminder(channel_id, text, delivery_id, open_url)
     except Exception as error:
         if fence >= MAX_ATTEMPTS:
             _finish(connect_factory, job_id, fence, "FAILED", str(error))
@@ -330,12 +340,18 @@ def _cron_secret():
 
 def _default_sender():
     from app.config import load_config
-    from app.telegram import Sender
 
-    token = load_config().telegram_bot_token
-    if not token:
-        return None
-    return Sender(token)
+    cfg = load_config()
+    senders = {}
+    if cfg.discord_bot_token:
+        from app.modules.integrations.discord.client import Sender
+
+        senders["DISCORD"] = Sender(cfg.discord_bot_token)
+    if cfg.telegram_bot_token:
+        from app.telegram import Sender
+
+        senders["TELEGRAM"] = Sender(cfg.telegram_bot_token)
+    return senders or None
 
 
 @router.api_route("/cron/reminders", methods=["GET", "POST"])

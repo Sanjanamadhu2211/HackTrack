@@ -25,6 +25,7 @@ def _mount():
     from app.modules.capture import router as capture_router
     from app.modules.notifications import router as notifications_router
     from app.modules.integrations.telegram import router as telegram_router
+    from app.modules.integrations.discord import router as discord_router
     from app.modules.integrations.calendar import router as calendar_router
     from app.modules.integrations.email import router as email_router
 
@@ -32,21 +33,16 @@ def _mount():
 
     @api.middleware("http")
     async def same_origin_middleware(request: Request, call_next):
-        if request.method not in ("GET", "HEAD", "OPTIONS"):
-            cfg = load_config()
-            origin = request.headers.get("origin", "")
-            if origin != cfg.app_base_url and not (
-                origin == "" and request.headers.get("sec-fetch-site", "") == "same-origin"
-            ):
-                return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
-        # Session gate for everything except machine routes.
         machine = request.url.path.endswith(
             (
                 "/healthz",
                 "/readyz",
                 "/integrations/telegram/webhook",
+                "/integrations/discord/interactions",
                 "/integrations/email/webhook/mime",
                 "/cron/reminders",
+                "/cron/discord",
+                "/cron/discovery",
                 "/cron/lag",
                 "/cron/calendar",
                 "/auth/google/start",
@@ -55,6 +51,14 @@ def _mount():
                 "/auth/dev-login",
             )
         )
+        if not machine and request.method not in ("GET", "HEAD", "OPTIONS"):
+            cfg = load_config()
+            origin = request.headers.get("origin", "")
+            if origin != cfg.app_base_url and not (
+                origin == "" and request.headers.get("sec-fetch-site", "") == "same-origin"
+            ):
+                return JSONResponse({"error": "cross-origin request rejected"}, status_code=403)
+        # Session gate for everything except machine routes.
         if not machine:
             try:
                 # Sync DB lookup must not block the event loop.
@@ -69,6 +73,7 @@ def _mount():
     api.include_router(hackathons_router, prefix="/api")
     api.include_router(capture_router, prefix="/api")
     api.include_router(telegram_router, prefix="/api")
+    api.include_router(discord_router, prefix="/api")
     api.include_router(email_router, prefix="/api")
     api.include_router(calendar_router, prefix="/api")
     api.include_router(notifications_router, prefix="/api")

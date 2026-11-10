@@ -31,7 +31,7 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
   const router = useRouter();
   const [msg, setMsg] = useState("");
   const [saving, setSaving] = useState(false);
-  const [pairURL, setPairURL] = useState("");
+  const [pairCode, setPairCode] = useState("");
   const [calendarConnected, setCalendarConnected] = useState<boolean | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState("");
@@ -87,16 +87,21 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
 
   async function pair() {
     try {
-      const { url } = await api<{ url: string }>("/integrations/telegram/pair", { method: "POST" });
-      setPairURL(url);
+      const { code } = await api<{ code: string }>("/integrations/discord/pair", { method: "POST" });
+      setPairCode(code);
     } catch (err) {
       setMsg((err as Error).message);
     }
   }
 
   async function unlink() {
-    await api("/integrations/telegram", { method: "DELETE" });
-    setMe({ ...me, telegram_linked: false });
+    try {
+      await api("/integrations/discord", { method: "DELETE" });
+      setMe({ ...me, discord_linked: false });
+      setPairCode("");
+    } catch (err) {
+      setMsg((err as Error).message);
+    }
   }
 
   async function logout() {
@@ -190,28 +195,26 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
       </section>
 
       <section className="panel stack">
-        <h2>Telegram Notifications</h2>
+        <h2>Discord Notifications</h2>
         <p className="muted" style={{ margin: 0 }}>
-          Receive instant reminders and confirm milestones directly in Telegram.
+          Receive reminders, confirm captured dates, and get a daily list of new hackathons in your Discord channel.
         </p>
 
-        {me.telegram_linked ? (
+        {me.discord_linked ? (
           <div className="row" style={{ justifyContent: "space-between" }}>
             <div className="row">
               <span className="badge ok">✓ Connected</span>
-              <span className="muted">Ready to receive alerts</span>
+              <span className="muted">Ready to receive HackTrack updates</span>
             </div>
             <button onClick={unlink} className="danger">
-              Disconnect Telegram
+              Disconnect Discord
             </button>
           </div>
-        ) : pairURL ? (
+        ) : pairCode ? (
           <div className="panel stack" style={{ background: "var(--panel)" }}>
-            <p className="muted">Your one-time pairing link is ready (expires in 15 minutes):</p>
+            <p className="muted">In your HackTrack Discord channel, run <code>/link</code> and paste this one-time code. It expires in 15 minutes.</p>
             <div className="row">
-              <a href={pairURL} target="_blank" rel="noreferrer" className="button primary">
-                Open Telegram & Press Start ↗
-              </a>
+              <code>{pairCode}</code>
               <button type="button" onClick={() => window.location.reload()}>
                 Check Status
               </button>
@@ -220,7 +223,7 @@ function SettingsForm({ me, setMe }: { me: Me; setMe: (m: Me) => void }) {
         ) : (
           <div>
             <button className="primary" onClick={pair}>
-              Connect Telegram Bot
+              Connect Discord
             </button>
           </div>
         )}

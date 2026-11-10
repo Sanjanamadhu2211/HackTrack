@@ -1,8 +1,8 @@
 # HackTrack
 
-HackTrack keeps one clear next action for every hackathon you track: save
-events from a link or pasted post, get Telegram reminders before every
-deadline, and mark things done in one tap.
+HackTrack keeps one clear next action for every hackathon you track: capture
+event links from Discord or the web app, get Discord reminders before
+deadlines, and mark things done in one tap.
 
 ## Run it locally
 
@@ -23,6 +23,20 @@ connection as DATABASE_URL). Direct Supabase connections require IPv6 access.
 ```
 cd apps/api && python -m pytest -q
 ```
+
+## Discord setup
+
+1. Create an application in the [Discord Developer Portal](https://discord.com/developers/applications), add its bot, and invite it to your server with the `bot` and `applications.commands` scopes and permission to send messages.
+2. Set `DISCORD_APPLICATION_ID`, `DISCORD_PUBLIC_KEY`, and `DISCORD_BOT_TOKEN` in the API environment. Set the existing `CRON_SECRET` too; the capture queue and daily discovery digest use the scheduled worker routes.
+3. In the application settings, set the Interactions Endpoint URL to `https://YOUR_APP_HOST/api/integrations/discord/interactions`.
+4. With those values in the project `.env`, run `cd apps/api && python register_discord_commands.py` to register `/link`, `/track`, and the **Track link** message action.
+5. Open HackTrack Settings, choose **Connect Discord**, then run `/link` with the one-time code in the channel where you want HackTrack updates.
+
+Use `/track URL` or choose **Apps → Track link** on a Discord message that contains a hackathon link. Each morning around 9:00 in your HackTrack Settings timezone, the discovery brief sends up to five links that have not already been sent or tracked. The [Hackathon Aggregator API](https://github.com/0xarchit/hackathon-api) supplies listings with platform, mode, and dates when available; direct listings provide a fallback and supplement missing MLH events. Use **Track** to save a link, or **Registered** after you register to save it and record your registration. Captured event messages also have an **I registered** button. Review and confirm extracted deadlines before their reminders are enabled; if a page cannot be read, add its deadlines in HackTrack. Captures and reminder checks run every five minutes. No Message Content Intent is needed.
+
+Discovery treats matching normalized URLs or matching descriptive titles as the same event; different events with identical titles may be hidden. Vercel's frequent cron schedules require a plan that supports them; on Hobby, use an external scheduler for the cron endpoints.
+
+The existing Telegram link data and webhook remain available during the cutover. Reminders use Discord after it is linked and can still use an existing Telegram link before that first Discord connection; disconnecting Discord stops new Discord deliveries.
 
 ## Supabase database access
 

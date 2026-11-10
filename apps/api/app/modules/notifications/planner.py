@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-CHANNEL = "TELEGRAM"
+CHANNEL = "DISCORD"
 
 POLICY = {
     "REGISTER": [("T-7d", timedelta(days=7), False), ("T-2d", timedelta(days=2), False), ("T-6h", timedelta(hours=6), False)],
