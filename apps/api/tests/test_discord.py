@@ -2,6 +2,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from datetime import date, datetime, timezone
+import asyncio
 from importlib import import_module
 import json
 import sqlite3
@@ -294,8 +295,26 @@ def test_two_queued_briefs_send_at_most_five_in_one_morning():
 
 def test_digest_uses_the_users_morning_including_half_hour_timezones():
     assert _is_morning(datetime(2026, 11, 9, 3, 30, tzinfo=timezone.utc), "Asia/Kolkata")
+    assert _is_morning(datetime(2026, 11, 9, 4, 59, tzinfo=timezone.utc), "Asia/Kolkata")
+    assert not _is_morning(datetime(2026, 11, 9, 5, 30, tzinfo=timezone.utc), "Asia/Kolkata")
     assert not _is_morning(datetime(2026, 11, 9, 2, 30, tzinfo=timezone.utc), "Asia/Kolkata")
     assert _is_morning(datetime(2026, 11, 9, 9, 0, tzinfo=timezone.utc), "UTC")
+
+
+def test_discovery_cron_delivers_the_queued_brief(monkeypatch):
+    discovery = import_module("app.modules.integrations.discord.discovery")
+    router = import_module("app.modules.integrations.discord.router")
+    calls = []
+    monkeypatch.setattr(router, "cron_authorized", lambda _request: True)
+    monkeypatch.setattr(discovery, "run_discovery", lambda _connect: calls.append("discover") or {"digests_queued": 1})
+    monkeypatch.setattr(discovery, "deliver_pending_digests", lambda _connect, _sender: calls.append("deliver") or {"digests_sent": 1})
+    monkeypatch.setattr(router, "Sender", lambda: object())
+
+    response = asyncio.run(router.discovery_cron(object()))
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"digests_queued": 1, "digests_sent": 1}
+    assert calls == ["discover", "deliver"]
 
 
 def test_digest_omits_matching_titles_from_different_sources():

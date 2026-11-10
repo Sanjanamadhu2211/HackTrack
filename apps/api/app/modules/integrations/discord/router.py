@@ -376,9 +376,11 @@ async def discovery_cron(request: Request):
     if not cron_authorized(request):
         return JSONResponse({"error": "unauthorized"}, status_code=401)
     try:
-        from app.modules.integrations.discord.discovery import run_discovery
+        from app.modules.integrations.discord.discovery import deliver_pending_digests, run_discovery
 
-        return JSONResponse(run_discovery(db.connect), status_code=200)
+        result = run_discovery(db.connect)
+        result.update(deliver_pending_digests(db.connect, Sender()))
+        return JSONResponse(result, status_code=200)
     except Exception:
         log.exception("Discord discovery run failed")
         return JSONResponse({"error": "internal error"}, status_code=500)

@@ -179,7 +179,7 @@ def _local_time(now, timezone_name):
 
 
 def _is_morning(now, timezone_name):
-    return _local_time(now, timezone_name).hour == 9
+    return 9 <= _local_time(now, timezone_name).hour < 11
 
 
 def run_discovery(connect_factory, now=None):
@@ -305,7 +305,7 @@ def deliver_pending_digests(connect_factory, sender, now=None):
                             (user_id, day_start, day_end),
                         )
                         already_sent = cur.fetchone()["n"] > 0
-                        if local.hour != 9 or already_sent:
+                        if not _is_morning(now, link["timezone"]) or already_sent:
                             next_morning = day_start.replace(hour=9)
                             if local.hour >= 9 or already_sent:
                                 next_morning += timedelta(days=1)
